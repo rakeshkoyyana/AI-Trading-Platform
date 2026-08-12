@@ -7,12 +7,12 @@ Every task below maps 1:1 to an issue created by `scripts/create_github_issues.s
 - [ ] **Init git + GitHub repo** — `git init`, create private GitHub repo, add remote, first commit.
 - [ ] **Create folder structure & .gitignore** — Set up `src/`, `data/`, `models/`, `tests/`, `notebooks/`; create `.gitignore` excluding `venv/`, `.env`, `data/`.
 - [ ] **Create requirements.txt & install** — Add all needed packages, run `pip install -r requirements.txt`.
-- [ ] **Create Alpaca account & get paper API keys** — Sign up at alpaca.markets, generate paper trading Key ID + Secret.
-- [ ] **Create Finnhub account & get API key** — Sign up at finnhub.io/register, copy free-tier API key.
-- [ ] **Create NewsAPI account (backup) & get API key** — Sign up at newsapi.org/register.
-- [ ] **Set up Discord webhook for alerts** — Create webhook URL in a Discord server for error/status alerts.
-- [ ] **Create .env file with all keys** — Store Alpaca, Finnhub, NewsAPI keys and Discord webhook URL; confirm it's gitignored.
-- [ ] **Write and run smoke_test.py** — Script that loads .env and prints Alpaca paper account balance to confirm setup works end-to-end.
+- [x] **Create Alpaca account & get paper API keys** — Sign up at alpaca.markets, generate paper trading Key ID + Secret.
+- [x] **Create Finnhub account & get API key** — Sign up at finnhub.io/register, copy free-tier API key.
+- [x] **Create NewsAPI account (backup) & get API key** — Sign up at newsapi.org/register.
+- [x] **Set up Discord webhook for alerts** — Create webhook URL in a Discord server for error/status alerts.
+- [x] **Create .env file with all keys** — Store Alpaca, Finnhub, NewsAPI keys and Discord webhook URL; confirm it's gitignored.
+- [x] **Write and run smoke_test.py** — Script that loads .env and prints Alpaca paper account balance to confirm setup works end-to-end.
 
 ## Phase 1 – Data Pipeline
 - [ ] **Build Alpaca data ingestion function** — `get_bars(symbol, timeframe, start, end)` returning a clean OHLCV DataFrame.

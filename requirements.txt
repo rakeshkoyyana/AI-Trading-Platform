@@ -1,0 +1,16 @@
+pandas
+numpy
+yfinance
+alpaca-trade-api
+apscheduler
+scikit-learn
+xgboost
+transformers
+torch
+requests
+python-dotenv
+sqlalchemy
+streamlit
+plotly
+pandas_market_calendars
+pytest

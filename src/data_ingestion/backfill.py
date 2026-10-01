@@ -17,7 +17,6 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from src.config import get_settings
 from src.data_ingestion import get_bars_with_fallback
-from src.data_ingestion.common import regular_hours_mask
 from src.db.schema import Bar, get_engine, init_db, session_scope
 
 
@@ -57,24 +56,6 @@ def save_bars(engine, symbol: str, timeframe: str, df: pd.DataFrame) -> int:
     return len(rows)
 
 
-def purge_extended_hours(engine, symbol: str | None = None) -> int:
-    """Delete stored pre-/post-market bars (left over from before ingestion filtered them)."""
-    with session_scope(engine) as s:
-        q = select(Bar.id, Bar.timestamp, Bar.timeframe)
-        if symbol:
-            q = q.where(Bar.symbol == symbol)
-        rows = s.execute(q).all()
-        if not rows:
-            return 0
-        df = pd.DataFrame(rows, columns=["id", "timestamp", "timeframe"])
-        drop = []
-        for tf, g in df.groupby("timeframe"):
-            drop += g.loc[~regular_hours_mask(g["timestamp"], tf), "id"].tolist()
-        for i in range(0, len(drop), 500):
-            s.query(Bar).filter(Bar.id.in_(drop[i : i + 500])).delete(synchronize_session=False)
-        return len(drop)
-
-
 def load_bars(engine, symbol: str, timeframe: str, since: datetime | None = None) -> pd.DataFrame:
     q = select(Bar).where(Bar.symbol == symbol, Bar.timeframe == timeframe)
     if since is not None:
@@ -109,9 +90,6 @@ def backfill(
     engine = engine or get_engine()
     init_db(engine)
     now = datetime.now(timezone.utc)
-    removed = purge_extended_hours(engine)
-    if removed:
-        print(f"[backfill] removed {removed} stored pre-/post-market bars")
     results: dict[str, int] = {}
     for sym in symbols:
         start = now - timedelta(days=30 * months)

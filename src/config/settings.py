@@ -51,6 +51,16 @@ class Settings:
     risk_per_trade_pct: float = 0.005  # equity risked per trade (stop distance)
     min_model_probability: float = 0.55
     sentiment_block_threshold: float = 0.5  # |score| beyond this blocks counter-trend
+    allow_shorts: bool = True
+    require_model: bool = False  # True: refuse to trade until a trained model exists
+    max_stop_pct: float = 0.05  # reject setups whose stop is wider than this % of price
+    min_stop_atr: float = 0.25  # reject stops tighter than this many ATRs (noise)
+    min_rr: float = 1.5
+    signal_max_age_bars: int = 2  # ignore signals older than this many bars (stale data guard)
+    flatten_at_close: bool = True  # close all positions at session end (day-trading)
+    flatten_minutes_before_close: int = 5  # orders sent AT the close can't fill until tomorrow
+    no_new_entries_minutes_before_close: int = 15
+    bar_delay_seconds: int = 20  # wait after a bar closes before fetching it
 
     # --- schedule ----------------------------------------------------------
     timezone: str = "America/Chicago"
@@ -90,4 +100,15 @@ def get_settings() -> Settings:
         max_open_positions=int(env("MAX_OPEN_POSITIONS", "3")),
         risk_per_trade_pct=float(env("RISK_PER_TRADE_PCT", "0.005")),
         min_model_probability=float(env("MIN_MODEL_PROBABILITY", "0.55")),
+        sentiment_block_threshold=float(env("SENTIMENT_BLOCK_THRESHOLD", "0.5")),
+        allow_shorts=env("ALLOW_SHORTS", "true").lower() in {"1", "true", "yes", "on"},
+        require_model=env("REQUIRE_MODEL", "false").lower() in {"1", "true", "yes", "on"},
+        max_stop_pct=float(env("MAX_STOP_PCT", "0.05")),
+        min_stop_atr=float(env("MIN_STOP_ATR", "0.25")),
+        min_rr=float(env("MIN_RR", "1.5")),
+        signal_max_age_bars=int(env("SIGNAL_MAX_AGE_BARS", "2")),
+        flatten_at_close=env("FLATTEN_AT_CLOSE", "true").lower() in {"1", "true", "yes", "on"},
+        flatten_minutes_before_close=int(env("FLATTEN_MINUTES_BEFORE_CLOSE", "5")),
+        no_new_entries_minutes_before_close=int(env("NO_NEW_ENTRIES_MINUTES_BEFORE_CLOSE", "15")),
+        bar_delay_seconds=int(env("BAR_DELAY_SECONDS", "20")),
     )

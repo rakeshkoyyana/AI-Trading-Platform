@@ -54,6 +54,37 @@ def build_signal_rows(ctx: pd.DataFrame, labels: pd.DataFrame) -> list[dict]:
     return rows
 
 
+def upsert_signal_event(engine, symbol: str, timeframe: str, ctx: pd.DataFrame, i: int | None = None) -> int | None:
+    """Store one live signal (the event at row `i`, default last row) without labels.
+
+    Labels are filled later by `backfill_signals` once forward bars exist. Returns the signal id,
+    or None if that bar carries no signal event.
+    """
+    i = len(ctx) - 1 if i is None else i
+    direction = ctx["signal_event"].iat[i]
+    if direction not in ("long", "short"):
+        return None
+    r = ctx.iloc[i]
+    details = {c: _clean(r[c]) for c in FEATURE_COLS}
+    details["zone"] = str(r["zone"])
+    ts = pd.Timestamp(r["timestamp"]).to_pydatetime()
+    with session_scope(engine) as s:
+        sg = s.execute(
+            select(Signal).where(
+                Signal.symbol == symbol, Signal.timeframe == timeframe,
+                Signal.signal_type == SIGNAL_TYPE, Signal.timestamp == ts,
+            )
+        ).scalars().first()
+        if sg is None:
+            sg = Signal(
+                symbol=symbol, timeframe=timeframe, signal_type=SIGNAL_TYPE, timestamp=ts,
+                direction=direction, entry_price=_clean(r["close"]), confirmation_details_json=details,
+            )
+            s.add(sg)
+            s.flush()
+        return sg.id
+
+
 def backfill_signals(
     symbols: list[str], timeframe: str, horizon: int = 8, min_return: float = 0.0, engine=None
 ) -> dict[str, int]:

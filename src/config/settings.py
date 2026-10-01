@@ -56,6 +56,7 @@ class Settings:
     min_model_probability: float = 0.55
     sentiment_block_threshold: float = 0.5  # |score| beyond this blocks counter-trend
     allow_shorts: bool = True
+    use_unvalidated_model: bool = False  # True: let a model that did NOT beat raw signals OOS gate trades
     require_model: bool = False  # True: refuse to trade until a trained model exists
     max_stop_pct: float = 0.05  # reject setups whose stop is wider than this % of price
     min_stop_atr: float = 0.25  # reject stops tighter than this many ATRs (noise)
@@ -107,6 +108,7 @@ def get_settings() -> Settings:
         min_model_probability=float(env("MIN_MODEL_PROBABILITY", "0.55")),
         sentiment_block_threshold=float(env("SENTIMENT_BLOCK_THRESHOLD", "0.5")),
         allow_shorts=env("ALLOW_SHORTS", "true").lower() in {"1", "true", "yes", "on"},
+        use_unvalidated_model=env("USE_UNVALIDATED_MODEL", "false").lower() in {"1", "true", "yes", "on"},
         require_model=env("REQUIRE_MODEL", "false").lower() in {"1", "true", "yes", "on"},
         max_stop_pct=float(env("MAX_STOP_PCT", "0.05")),
         min_stop_atr=float(env("MIN_STOP_ATR", "0.25")),

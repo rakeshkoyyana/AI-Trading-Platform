@@ -227,3 +227,16 @@ def test_end_session_summarises(world):
 def test_build_scheduler_registers_all_jobs(world):
     sched = build_scheduler(world["make"]())
     assert {j.id for j in sched.get_jobs()} == {"session_start", "cycle", "flatten", "session_end", "sentiment"}
+
+
+def test_model_that_does_not_improve_never_gates_trades():
+    from src.scheduler.run_loop import gating_bundle
+
+    bad = dict(version="v1", metrics=dict(improves=False))
+    good = dict(version="v2", metrics=dict(improves=True))
+    assert gating_bundle(None, S) == (None, "none")
+    b, note = gating_bundle(bad, S)
+    assert b is None and "did not beat" in note
+    assert gating_bundle(good, S)[0] is good
+    opt_in = Settings(use_unvalidated_model=True)
+    assert gating_bundle(bad, opt_in)[0] is bad

@@ -43,6 +43,16 @@ from src.sentiment.aggregate import get_rolling_sentiment, refresh_sentiment
 from src.smc_logic.backfill_signals import backfill_signals, upsert_signal_event
 from src.smc_logic.pipeline import compute_context
 
+def gating_bundle(bundle: dict | None, settings: Settings) -> tuple[dict | None, str]:
+    """Only let a model gate trades if it beat the raw signal out of sample (or the user opts in)."""
+    if not bundle:
+        return None, "none"
+    improves = bundle.get("improves", (bundle.get("metrics") or {}).get("improves"))
+    if improves is False and not settings.use_unvalidated_model:
+        return None, f"ignored ({bundle.get('version', '?')} did not beat raw signals OOS)"
+    return bundle, bundle.get("version", "yes")
+
+
 STATE_PATH = PROJECT_ROOT / "data" / "state.json"
 MIN_BARS = 300  # ATR(200) + swing(50) warm-up
 
@@ -161,7 +171,7 @@ class TradingCycle:
             acct = self.broker.get_account()
             positions = {p.symbol: p.qty for p in self.broker.get_positions()}
             state = AccountState(acct.equity, acct.buying_power, self.day_start_equity(now), positions)
-            bundle = self.bundle if self.bundle is not None else load_bundle()
+            bundle, model_note = gating_bundle(self.bundle if self.bundle is not None else load_bundle(), self.s)
             can_open = force or can_open_new_positions(now, self.s)
             for sym in self.s.tickers:
                 try:
@@ -176,7 +186,7 @@ class TradingCycle:
             alerts.log_event(
                 "cycle",
                 f"{len(self.s.tickers)} symbols, {out['signals']} signal(s), {out['trades']} trade(s), "
-                f"equity ${acct.equity:,.2f}, model={'yes' if bundle else 'none'}",
+                f"equity ${acct.equity:,.2f}, model={model_note}",
                 self.engine,
             )
         except Exception as exc:  # noqa: BLE001 - never let one cycle kill the process

@@ -80,3 +80,19 @@ def test_live_alpaca_get_bars():
     assert len(df) > 0
     assert list(df.columns) == BAR_COLUMNS
     assert not df[["open", "high", "low", "close"]].isna().any().any()
+
+
+def test_extended_hours_are_stored_and_filtered_only_on_read(tmp_path):
+    from src.data_ingestion.backfill import load_bars, save_bars
+    from src.db.schema import get_engine, init_db
+
+    # EDT: 08:00 ET (pre), 09:30 ET (open), 15:45 ET (last RTH bar), 16:00 ET (post) -> UTC +4h
+    ts = pd.to_datetime(["2026-07-01 12:00", "2026-07-01 13:30", "2026-07-01 19:45", "2026-07-01 20:00"])
+    df = pd.DataFrame({"timestamp": ts, "open": 1.0, "high": 2.0, "low": 0.5, "close": 1.5, "volume": 10.0})
+    eng = get_engine(f"sqlite:///{tmp_path/'x.db'}")
+    init_db(eng)
+    save_bars(eng, "AAA", "15Min", df)
+    assert len(load_bars(eng, "AAA", "15Min", extended_hours=True)) == 4
+    rth = load_bars(eng, "AAA", "15Min", extended_hours=False)
+    assert list(rth["timestamp"].dt.strftime("%H:%M")) == ["13:30", "19:45"]
+    assert len(load_bars(eng, "AAA", "15Min")) == 4  # default follows settings (True)

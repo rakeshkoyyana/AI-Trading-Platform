@@ -41,3 +41,16 @@ def standardize_bars(df: pd.DataFrame) -> pd.DataFrame:
     out = out.dropna(subset=["open", "high", "low", "close"])
     out = out.drop_duplicates(subset="timestamp").sort_values("timestamp")
     return out.reset_index(drop=True)
+
+
+def regular_hours_mask(ts_utc_naive: pd.Series, timeframe: str) -> pd.Series:
+    """True for bars that START inside the regular NYSE session (09:30-16:00 ET).
+
+    Daily bars are always True. Hourly bars are clock-aligned (the 09:00 bar holds 09:30-10:00).
+    """
+    if TIMEFRAME_MINUTES.get(timeframe, 15) >= 1440:
+        return pd.Series(True, index=ts_utc_naive.index)
+    et = pd.to_datetime(ts_utc_naive).dt.tz_localize("UTC").dt.tz_convert("America/New_York")
+    mins = et.dt.hour * 60 + et.dt.minute
+    start = 9 * 60 if TIMEFRAME_MINUTES.get(timeframe, 15) >= 60 else 9 * 60 + 30
+    return (mins >= start) & (mins < 16 * 60)

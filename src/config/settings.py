@@ -42,6 +42,10 @@ class Settings:
     # --- data --------------------------------------------------------------
     tickers: list[str] = field(default_factory=lambda: list(DEFAULT_TICKERS))
     timeframe: str = "15Min"  # "5Min" | "15Min" | "1Hour" | "1Day"
+    # True: indicators/signals/models use every stored bar (pre/post-market included, matching a
+    # TradingView chart with "Extended hours" on). False: regular session 09:30-16:00 ET only.
+    # Bars are always STORED unfiltered; this only changes what load_bars() returns.
+    include_extended_hours: bool = True
     database_url: str = f"sqlite:///{PROJECT_ROOT / 'data' / 'trading.db'}"
 
     # --- risk rules --------------------------------------------------------
@@ -92,6 +96,7 @@ def get_settings() -> Settings:
         trading_mode=mode,
         tickers=_csv(env("TICKERS"), DEFAULT_TICKERS),
         timeframe=env("TIMEFRAME", "15Min"),
+        include_extended_hours=env("INCLUDE_EXTENDED_HOURS", "true").lower() in {"1", "true", "yes", "on"},
         database_url=env(
             "DATABASE_URL", f"sqlite:///{PROJECT_ROOT / 'data' / 'trading.db'}"
         ),

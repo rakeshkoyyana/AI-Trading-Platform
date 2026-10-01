@@ -88,7 +88,7 @@ def world(tmp_path):
         return TradingCycle(
             engine=engine, broker=broker, settings=settings, fetch=fetch,
             notify=lambda m, level="info", engine=None, post=True: msgs.append((level, m)),
-            sentiment_fn=lambda s: 0.0, state_path=tmp_path / "state.json", **kw,
+            sentiment_fn=lambda s: dict(score=0.0, n=2), state_path=tmp_path / "state.json", **kw,
         )
 
     return dict(engine=engine, frames=frames, msgs=msgs, broker=broker, make=make, tmp=tmp_path, clock=clock)
@@ -117,6 +117,7 @@ def test_full_cycle_places_orders_logs_and_never_crashes(world):
             world["broker"].set_price(sym, float(world["frames"][sym]["close"].iat[k]))
         out = c.run_cycle(now=now, force=True)
         assert "error" not in out, out
+        assert not [s for s, r in out["symbols"].items() if r.get("error")], out["symbols"]
         total += out["trades"]
     assert total >= 1, "expected at least one paper trade over ~130 replayed cycles"
     with session_scope(world["engine"]) as s:

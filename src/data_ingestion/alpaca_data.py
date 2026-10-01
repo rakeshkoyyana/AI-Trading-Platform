@@ -6,7 +6,7 @@ from datetime import datetime
 import pandas as pd
 
 from src.config import get_settings
-from src.data_ingestion.common import BAR_COLUMNS, standardize_bars
+from src.data_ingestion.common import BAR_COLUMNS, keep_regular_hours, standardize_bars
 
 
 def _alpaca_timeframe(timeframe: str):
@@ -61,4 +61,4 @@ def get_bars(
     bars = bars.reset_index()
     if "symbol" in bars.columns:
         bars = bars[bars["symbol"] == symbol]
-    return standardize_bars(bars)
+    return keep_regular_hours(standardize_bars(bars), timeframe)

@@ -9,7 +9,7 @@ from datetime import datetime
 
 import pandas as pd
 
-from src.data_ingestion.common import BAR_COLUMNS, YF_INTERVAL, standardize_bars
+from src.data_ingestion.common import BAR_COLUMNS, YF_INTERVAL, keep_regular_hours, standardize_bars
 
 
 def get_bars(
@@ -39,4 +39,4 @@ def get_bars(
         raw.columns = raw.columns.get_level_values(0)
     raw = raw.reset_index()
     raw = raw.rename(columns={"Datetime": "timestamp", "Date": "timestamp"})
-    return standardize_bars(raw)
+    return keep_regular_hours(standardize_bars(raw), timeframe)

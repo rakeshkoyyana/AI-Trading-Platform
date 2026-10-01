@@ -29,6 +29,36 @@ from src.execution.sim_broker import SimBroker
 from src.scheduler.market_hours import to_local
 
 
+_DEMO_HEADLINES = [
+    ("{s} beats quarterly estimates as demand stays strong", 0.82), ("Analysts raise {s} price target after upbeat guidance", 0.74),
+    ("{s} announces share buyback programme", 0.55), ("{s} shares edge higher in quiet trade", 0.12),
+    ("Options activity picks up in {s} ahead of key data", 0.05), ("{s} faces regulatory scrutiny over disclosures", -0.58),
+    ("Downgrade: {s} cut to neutral on valuation concerns", -0.71), ("{s} slides as sector rotation weighs on growth names", -0.44),
+    ("{s} CFO to step down at year end", -0.33), ("{s} unveils new product line at industry event", 0.46),
+]
+
+
+def seed_demo_news(engine, symbols, hours: int = 48, seed: int = 5) -> int:
+    """Synthetic, clearly-labelled headlines so the dashboard's news rail has content in demo mode."""
+    from src.db.schema import News, SentimentScore, session_scope
+
+    rng = np.random.default_rng(seed)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    n = 0
+    with session_scope(engine) as s:
+        for sym in symbols:
+            for j in range(9):
+                tpl, sc = _DEMO_HEADLINES[int(rng.integers(len(_DEMO_HEADLINES)))]
+                ts = now - timedelta(minutes=int(rng.integers(5, hours * 60)))
+                row = News(symbol=sym, timestamp=ts, headline="[demo] " + tpl.format(s=sym), source="demo", url=f"https://example.com/demo/{sym}/{j}")
+                s.add(row)
+                s.flush()
+                sc = float(np.clip(sc + rng.normal(0, 0.12), -1, 1))
+                s.add(SentimentScore(news_id=row.id, symbol=sym, timestamp=ts, score=sc, label="positive" if sc > 0.2 else "negative" if sc < -0.2 else "neutral"))
+                n += 1
+    return n
+
+
 def replay(db_url: str, symbols: list[str], days: int = 8, history_days: int = 40, seed: int = 3,
            equity: float = 100_000.0, settings=None, quiet: bool = True) -> dict:
     s = dataclasses.replace(settings or get_settings(), tickers=symbols)
@@ -97,6 +127,7 @@ def replay(db_url: str, symbols: list[str], days: int = 8, history_days: int = 4
                 cycle.end_session(bar_close)
     finally:
         trade_log._utcnow, run_loop.load_bundle, run_loop.refresh_sentiment = old_utcnow, old_bundle, old_refresh
+    seed_demo_news(engine, symbols)
     stats["equity"] = broker.get_account().equity
     stats["db"] = db_url
     stats["errors"] = [m for lvl, m in msgs if lvl == "error"][:5]

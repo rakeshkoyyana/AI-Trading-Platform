@@ -1,0 +1,383 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg:#12141f; --panel:#1b1e2e; --panel2:#222640; --border:#2a2e45; --text:#e6e8f2; --muted:#8a90ab;
+    --up:#26a69a; --down:#ef5350; --accent:#6c8cff; --amber:#f5b041;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--text);
+    font: 12px/1.35 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif; }
+  #wrap { display:flex; flex-direction:column; height:100%; border:1px solid var(--border); border-radius:12px; overflow:hidden; background:var(--bg); }
+  #bar { display:flex; flex-wrap:wrap; gap:6px 10px; align-items:center; padding:8px 10px; background:var(--panel); border-bottom:1px solid var(--border); }
+  .sym { font-weight:700; font-size:14px; letter-spacing:.3px; margin-right:4px; }
+  .grp { display:flex; gap:2px; padding:2px; background:var(--bg); border:1px solid var(--border); border-radius:8px; }
+  .grp .lbl { color:var(--muted); font-size:10px; padding:5px 6px 0 6px; text-transform:uppercase; letter-spacing:.6px; }
+  button { background:transparent; color:var(--muted); border:0; padding:4px 9px; border-radius:6px; cursor:pointer; font:inherit; }
+  button:hover { color:var(--text); background:var(--panel2); }
+  button.on { color:#fff; background:var(--accent); }
+  button.tog.on { background:var(--panel2); color:var(--text); box-shadow: inset 0 -2px 0 var(--accent); }
+  button.tool.on { background:var(--amber); color:#12141f; font-weight:600; }
+  #status { color:var(--amber); margin-left:auto; min-height:16px; }
+  #chartbox { position:relative; flex:1; min-height:300px; }
+  #chart { position:absolute; inset:0; }
+  #legend { position:absolute; left:10px; top:8px; z-index:5; pointer-events:none; display:flex; flex-wrap:wrap; gap:2px 12px;
+    background:rgba(18,20,31,.72); padding:5px 9px; border-radius:8px; border:1px solid var(--border); max-width:calc(100% - 90px); }
+  #legend b { font-size:13px; } .k { color:var(--muted); } .up { color:var(--up); } .dn { color:var(--down); }
+  #measure { position:absolute; z-index:6; pointer-events:none; display:none; background:var(--panel2); border:1px solid var(--amber);
+    color:var(--text); padding:5px 9px; border-radius:8px; font-weight:600; white-space:nowrap; }
+  #empty { position:absolute; inset:0; display:none; align-items:center; justify-content:center; color:var(--muted); font-size:14px; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="bar">
+    <span class="sym" id="symname"></span>
+    <div class="grp" id="tfs"></div>
+    <div class="grp"><span class="lbl">Ind</span>
+      <button class="tog" data-k="ema">EMA 9/21</button><button class="tog" data-k="vol">Volume</button><button class="tog" data-k="rsi">RSI</button></div>
+    <div class="grp"><span class="lbl">SMC</span>
+      <button class="tog" data-k="ob">Order blocks</button><button class="tog" data-k="fvg">FVG</button>
+      <button class="tog" data-k="structure">BOS/CHoCH</button><button class="tog" data-k="internal">Internal</button><button class="tog" data-k="swing">Swing levels</button>
+      <button class="tog" data-k="pd">Prem/Disc</button><button class="tog" data-k="eq">EQH/EQL</button></div>
+    <div class="grp"><span class="lbl">Show</span>
+      <button class="tog" data-k="signals">Signals</button><button class="tog" data-k="trades">Trades</button><button class="tog" data-k="tlines">SL/TP lines</button></div>
+    <div class="grp"><span class="lbl">Draw</span>
+      <button class="tool" data-t="cursor">Cursor</button><button class="tool" data-t="hline">H-line</button>
+      <button class="tool" data-t="trend">Trend</button><button class="tool" data-t="rect">Box</button>
+      <button class="tool" data-t="measure">Measure</button><button id="clear">Clear</button></div>
+    <div class="grp"><button id="magnet" class="tog">Magnet</button><button id="log" class="tog">Log</button>
+      <button id="fit">Fit</button><button id="full">Full</button></div>
+    <span id="status"></span>
+  </div>
+  <div id="chartbox">
+    <div id="chart"></div>
+    <div id="legend"></div>
+    <div id="measure"></div>
+    <div id="empty">No bars stored for this symbol yet.</div>
+  </div>
+</div>
+
+<script>/*__LIB__*/</script>
+<script>
+(function () {
+  const P = __PAYLOAD__;
+  const TZ = "America/Chicago";
+  const LS = (() => { try { const k = "__t"; localStorage.setItem(k, "1"); localStorage.removeItem(k); return localStorage; } catch (e) { return null; } })();
+  const ls = {
+    get: (k, d) => { try { const v = LS && LS.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
+    set: (k, v) => { try { LS && LS.setItem(k, JSON.stringify(v)); } catch (e) {} },
+  };
+  const $ = (s) => document.querySelector(s);
+  const { createChart, CandlestickSeries, LineSeries, HistogramSeries, createSeriesMarkers, CrosshairMode, LineStyle } = LightweightCharts;
+
+  $("#symname").textContent = P.symbol;
+  const prefs = Object.assign(
+    { tf: P.default_tf, ema: true, vol: true, rsi: true, ob: true, fvg: true, structure: true, internal: false, swing: true, pd: false, eq: false,
+      signals: true, trades: true, tlines: false, magnet: false, log: false },
+    ls.get("tp:prefs", {})
+  );
+  const savePrefs = () => ls.set("tp:prefs", prefs);
+
+  // ---------- time formatting (America/Chicago) ----------
+  const fmtDT = new Intl.DateTimeFormat("en-US", { timeZone: TZ, month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false });
+  const fmtD = new Intl.DateTimeFormat("en-US", { timeZone: TZ, month: "short", day: "2-digit" });
+  const fmtT = new Intl.DateTimeFormat("en-US", { timeZone: TZ, hour: "2-digit", minute: "2-digit", hour12: false });
+  const fmtM = new Intl.DateTimeFormat("en-US", { timeZone: TZ, month: "short" });
+  const tsOf = (t) => (typeof t === "number" ? t : null);
+
+  // ---------- chart ----------
+  const chart = createChart($("#chart"), {
+    autoSize: true,
+    layout: { background: { color: "#12141f" }, textColor: "#8a90ab", fontSize: 11, panes: { separatorColor: "#2a2e45", separatorHoverColor: "#3a3f60" } },
+    grid: { vertLines: { color: "rgba(42,46,69,.55)" }, horzLines: { color: "rgba(42,46,69,.55)" } },
+    crosshair: { mode: CrosshairMode.Normal,
+      vertLine: { color: "#6c8cff", labelBackgroundColor: "#6c8cff", style: LineStyle.Dashed },
+      horzLine: { color: "#6c8cff", labelBackgroundColor: "#6c8cff", style: LineStyle.Dashed } },
+    rightPriceScale: { borderColor: "#2a2e45", scaleMargins: { top: 0.08, bottom: 0.06 } },
+    timeScale: { borderColor: "#2a2e45", timeVisible: true, secondsVisible: false, rightOffset: 10, barSpacing: 8,
+      tickMarkFormatter: (time, type) => {
+        const d = new Date(time * 1000);
+        return type <= 2 ? (type === 1 ? fmtM.format(d) : fmtD.format(d)) : fmtT.format(d);
+      } },
+    localization: { timeFormatter: (t) => fmtDT.format(new Date(t * 1000)) + " CT" },
+  });
+
+  const candles = chart.addSeries(CandlestickSeries, {
+    upColor: "#26a69a", downColor: "#ef5350", borderUpColor: "#26a69a", borderDownColor: "#ef5350",
+    wickUpColor: "#26a69a", wickDownColor: "#ef5350", priceLineColor: "#6c8cff",
+  }, 0);
+  const ema9 = chart.addSeries(LineSeries, { color: "#f5b041", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false }, 0);
+  const ema21 = chart.addSeries(LineSeries, { color: "#b388ff", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false }, 0);
+  const vol = chart.addSeries(HistogramSeries, { priceFormat: { type: "volume" }, priceLineVisible: false, lastValueVisible: false }, 1);
+  const rsi = chart.addSeries(LineSeries, { color: "#6c8cff", lineWidth: 1, priceLineVisible: false, lastValueVisible: true }, 2);
+  rsi.createPriceLine({ price: 70, color: "rgba(239,83,80,.6)", lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: false });
+  rsi.createPriceLine({ price: 30, color: "rgba(38,166,154,.6)", lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: false });
+  const panes = chart.panes();
+  const markersApi = createSeriesMarkers(candles, []);
+
+  // ---------- dataset / snapping ----------
+  let DS = P.datasets[prefs.tf] || P.datasets["15m"];
+  let times = [];
+  const snapIdx = (t) => {            // index of last bar with time <= t (clamped)
+    let lo = 0, hi = times.length - 1, ans = 0;
+    if (!times.length) return -1;
+    if (t < times[0]) return 0;
+    while (lo <= hi) { const m = (lo + hi) >> 1; if (times[m] <= t) { ans = m; lo = m + 1; } else hi = m - 1; }
+    return ans;
+  };
+  const snapT = (t) => { const i = snapIdx(t); return i < 0 ? null : times[i]; };
+
+  // ---------- overlay primitive (zones, level segments, drawings) ----------
+  const state = { tool: "cursor", pending: null, drawings: ls.get("tp:" + P.symbol + ":draw", []), measure: null, hover: null };
+  const zoneVisible = (z) => prefs[z.kind] !== false && prefs[z.kind];
+  const segVisible = (s) => !!prefs[s.kind === "trade" ? "tlines" : s.kind];
+
+  function xOf(t) {
+    if (!times.length) return null;
+    const x = chart.timeScale().timeToCoordinate(snapT(t));
+    return x;
+  }
+  function yOf(p) { return candles.priceToCoordinate(p); }
+
+  class ZonesRenderer {
+    draw(target) {
+      target.useBitmapCoordinateSpace((s) => {
+        const c = s.context, hr = s.horizontalPixelRatio, vr = s.verticalPixelRatio, W = s.bitmapSize.width;
+        c.save();
+        for (const z of P.zones) {
+          if (!zoneVisible(z)) continue;
+          const x0 = xOf(z.t0), y0 = yOf(z.top), y1 = yOf(z.bottom);
+          if (x0 == null || y0 == null || y1 == null) continue;
+          let x1 = xOf(z.t1);
+          if (z.active) x1 = W / hr;
+          if (x1 == null) continue;
+          const left = Math.max(x0, 0) * hr, right = Math.max(x1, 0) * hr, top = Math.min(y0, y1) * vr, h = Math.abs(y1 - y0) * vr;
+          if (right < 0 || left > W) continue;
+          const faded = !z.active && z.kind !== "pd";
+          c.fillStyle = faded ? z.color.replace(/[\d.]+\)$/, ".09)") : z.color;
+          c.fillRect(left, top, Math.max(right - left, 1), Math.max(h, 1));
+          if (z.kind !== "pd") { c.strokeStyle = z.color.replace(/[\d.]+\)$/, faded ? ".25)" : ".6)"); c.lineWidth = 1; c.strokeRect(left, top, Math.max(right - left, 1), Math.max(h, 1)); }
+          if (x0 >= 0 && (z.active || z.kind === "pd")) {
+            c.fillStyle = "rgba(230,232,242,.7)"; c.font = `${Math.round(10 * hr)}px sans-serif`;
+            c.fillText(z.label, left + 4 * hr, top + 11 * vr);
+          }
+        }
+        c.restore();
+      });
+    }
+  }
+  class LinesRenderer {
+    draw(target) {
+      target.useBitmapCoordinateSpace((s) => {
+        const c = s.context, hr = s.horizontalPixelRatio, vr = s.verticalPixelRatio, W = s.bitmapSize.width;
+        c.save();
+        const line = (x0, x1, y, color, dash, label, w) => {
+          c.strokeStyle = color; c.lineWidth = (w || 1) * hr; c.setLineDash(dash ? [5 * hr, 4 * hr] : []);
+          c.beginPath(); c.moveTo(x0 * hr, y * vr); c.lineTo(x1 * hr, y * vr); c.stroke();
+          if (label) { c.setLineDash([]); c.fillStyle = color; c.font = `${Math.round(10 * hr)}px sans-serif`; c.fillText(label, x1 * hr - 34 * hr, y * vr - 3 * vr); }
+        };
+        for (const g of P.segs) {
+          if (!segVisible(g)) continue;
+          const x0 = xOf(g.t0), y = yOf(g.p);
+          if (x0 == null || y == null) continue;
+          let x1 = xOf(g.t1);
+          if (g.live) x1 = W / hr;
+          if (x1 == null) continue;
+          line(Math.max(x0, 0), x1, y, g.color, g.dash, g.kind === "trade" ? g.label : "", g.kind === "trade" ? 1.2 : 1);
+        }
+        // user drawings: boxes
+        for (const d of state.drawings) {
+          if (d.type !== "rect") continue;
+          const xa = xOf(d.t1), xb = xOf(d.t2), ya = yOf(d.p1), yb = yOf(d.p2);
+          if ([xa, xb, ya, yb].some((v) => v == null)) continue;
+          c.fillStyle = "rgba(245,176,65,.12)"; c.strokeStyle = "rgba(245,176,65,.8)"; c.setLineDash([]);
+          c.fillRect(Math.min(xa, xb) * hr, Math.min(ya, yb) * vr, Math.abs(xb - xa) * hr, Math.abs(yb - ya) * vr);
+          c.strokeRect(Math.min(xa, xb) * hr, Math.min(ya, yb) * vr, Math.abs(xb - xa) * hr, Math.abs(yb - ya) * vr);
+        }
+        for (const d of state.drawings) {
+          if (d.type !== "trend") continue;
+          const xa = xOf(d.t1), xb = xOf(d.t2), ya = yOf(d.p1), yb = yOf(d.p2);
+          if ([xa, xb, ya, yb].some((v) => v == null)) continue;
+          c.strokeStyle = "#f5b041"; c.lineWidth = 2 * hr; c.setLineDash([]);
+          c.beginPath(); c.moveTo(xa * hr, ya * vr); c.lineTo(xb * hr, yb * vr); c.stroke();
+          for (const [x, y] of [[xa, ya], [xb, yb]]) { c.fillStyle = "#f5b041"; c.beginPath(); c.arc(x * hr, y * vr, 3 * hr, 0, 7); c.fill(); }
+        }
+        // measure tool
+        const m = state.measure;
+        if (m) {
+          const xa = xOf(m.t1), xb = m.t2 ? xOf(m.t2) : null, ya = yOf(m.p1), yb = m.p2 != null ? yOf(m.p2) : null;
+          if (xa != null && xb != null && ya != null && yb != null) {
+            const up = m.p2 >= m.p1;
+            c.fillStyle = up ? "rgba(38,166,154,.18)" : "rgba(239,83,80,.18)"; c.strokeStyle = up ? "#26a69a" : "#ef5350"; c.setLineDash([]);
+            c.fillRect(Math.min(xa, xb) * hr, Math.min(ya, yb) * vr, Math.abs(xb - xa) * hr, Math.abs(yb - ya) * vr);
+            c.strokeRect(Math.min(xa, xb) * hr, Math.min(ya, yb) * vr, Math.abs(xb - xa) * hr, Math.abs(yb - ya) * vr);
+          }
+        }
+        // pending first click marker
+        if (state.pending) {
+          const x = xOf(state.pending.t), y = yOf(state.pending.p);
+          if (x != null && y != null) { c.fillStyle = "#f5b041"; c.beginPath(); c.arc(x * hr, y * vr, 4 * hr, 0, 7); c.fill(); }
+        }
+        c.restore();
+      });
+    }
+  }
+  class PV { constructor(r, z) { this._r = r; this._z = z; } renderer() { return this._r; } zOrder() { return this._z; } }
+  const overlay = {
+    _views: [new PV(new ZonesRenderer(), "bottom"), new PV(new LinesRenderer(), "normal")],
+    attached(p) { this._req = p.requestUpdate; },
+    detached() {},
+    updateAllViews() {},
+    paneViews() { return this._views; },
+  };
+  candles.attachPrimitive(overlay);
+  const redraw = () => { overlay._req && overlay._req(); };
+
+  // ---------- markers ----------
+  function applyMarkers() {
+    if (!times.length) { markersApi.setMarkers([]); return; }
+    const out = [];
+    for (const m of P.markers) {
+      if (!prefs[m.kind]) continue;
+      const t = snapT(m.time);
+      if (t == null) continue;
+      out.push({ time: t, position: m.pos === "above" ? "aboveBar" : "belowBar", color: m.color, shape: m.shape, text: m.kind === "signals" ? "" : m.text, size: m.kind === "structure" ? 1 : m.kind === "internal" || m.kind === "eq" ? 0.5 : 1 });
+    }
+    out.sort((a, b) => a.time - b.time);
+    markersApi.setMarkers(out);
+  }
+
+  // ---------- load a timeframe ----------
+  function setTF(tf, keepRange) {
+    prefs.tf = tf; savePrefs();
+    DS = P.datasets[tf];
+    times = DS.candles.map((c) => c.time);
+    $("#empty").style.display = times.length ? "none" : "flex";
+    candles.setData(DS.candles); ema9.setData(DS.ema9); ema21.setData(DS.ema21); vol.setData(DS.volume); rsi.setData(DS.rsi);
+    document.querySelectorAll("#tfs button").forEach((b) => b.classList.toggle("on", b.dataset.tf === tf));
+    applyMarkers(); redraw();
+    if (!keepRange) {
+      const saved = ls.get("tp:" + P.symbol + ":" + tf + ":range", null);
+      const n = times.length;
+      if (saved && n) chart.timeScale().setVisibleRange(saved);
+      else if (n) chart.timeScale().setVisibleLogicalRange({ from: Math.max(n - 140, 0), to: n + 10 });
+    }
+    updateLegend(null);
+  }
+  const tfBox = $("#tfs");
+  Object.keys(P.datasets).forEach((tf) => {
+    const b = document.createElement("button"); b.textContent = tf; b.dataset.tf = tf;
+    b.onclick = () => setTF(tf, false); tfBox.appendChild(b);
+  });
+
+  // ---------- toggles ----------
+  function applyToggles() {
+    ema9.applyOptions({ visible: !!prefs.ema }); ema21.applyOptions({ visible: !!prefs.ema });
+    vol.applyOptions({ visible: !!prefs.vol }); rsi.applyOptions({ visible: !!prefs.rsi });
+    if (panes.length >= 3) {
+      panes[0].setStretchFactor(3.2);
+      panes[1].setStretchFactor(prefs.vol ? 0.7 : 0.0001);
+      panes[2].setStretchFactor(prefs.rsi ? 0.9 : 0.0001);
+    }
+    chart.applyOptions({ crosshair: { mode: prefs.magnet ? CrosshairMode.Magnet : CrosshairMode.Normal } });
+    candles.priceScale().applyOptions({ mode: prefs.log ? 1 : 0 });
+    document.querySelectorAll("button.tog[data-k]").forEach((b) => b.classList.toggle("on", !!prefs[b.dataset.k]));
+    $("#magnet").classList.toggle("on", !!prefs.magnet); $("#log").classList.toggle("on", !!prefs.log);
+    applyMarkers(); redraw();
+  }
+  document.querySelectorAll("button.tog[data-k]").forEach((b) => b.onclick = () => { prefs[b.dataset.k] = !prefs[b.dataset.k]; savePrefs(); applyToggles(); });
+  $("#magnet").onclick = () => { prefs.magnet = !prefs.magnet; savePrefs(); applyToggles(); };
+  $("#log").onclick = () => { prefs.log = !prefs.log; savePrefs(); applyToggles(); };
+  $("#fit").onclick = () => { const n = times.length; chart.timeScale().setVisibleLogicalRange({ from: Math.max(n - 140, 0), to: n + 10 }); chart.priceScale("right").applyOptions({ autoScale: true }); };
+  $("#full").onclick = () => { const el = $("#wrap"); if (document.fullscreenElement) document.exitFullscreen(); else if (el.requestFullscreen) el.requestFullscreen(); };
+
+  // ---------- legend ----------
+  const nf = (v, d = 2) => (v == null ? "—" : Number(v).toFixed(d));
+  const vf = (v) => (v == null ? "—" : v >= 1e6 ? (v / 1e6).toFixed(2) + "M" : v >= 1e3 ? (v / 1e3).toFixed(1) + "K" : String(Math.round(v)));
+  function updateLegend(param) {
+    let i = -1;
+    if (param && param.time != null) i = snapIdx(param.time);
+    if (i < 0) i = times.length - 1;
+    if (i < 0) { $("#legend").innerHTML = ""; return; }
+    const c = DS.candles[i], prev = DS.candles[i - 1];
+    const ref = prev ? prev.close : c.open;
+    const chg = c.close - ref, pct = (chg / ref) * 100, cls = chg >= 0 ? "up" : "dn";
+    const t = times[i];
+    const e9 = DS.ema9.find((x) => x.time === t), e21 = DS.ema21.find((x) => x.time === t), r = DS.rsi.find((x) => x.time === t);
+    $("#legend").innerHTML =
+      `<b>${P.symbol}</b><span class="k">${fmtDT.format(new Date(t * 1000))} CT</span>` +
+      `<span><span class="k">O</span> ${nf(c.open)}</span><span><span class="k">H</span> ${nf(c.high)}</span>` +
+      `<span><span class="k">L</span> ${nf(c.low)}</span><span><span class="k">C</span> <span class="${cls}">${nf(c.close)}</span></span>` +
+      `<span class="${cls}">${chg >= 0 ? "+" : ""}${nf(chg)} (${chg >= 0 ? "+" : ""}${nf(pct)}%)</span>` +
+      `<span><span class="k">Vol</span> ${vf(DS.volume[i] && DS.volume[i].value)}</span>` +
+      (prefs.ema ? `<span style="color:#f5b041">EMA9 ${nf(e9 && e9.value)}</span><span style="color:#b388ff">EMA21 ${nf(e21 && e21.value)}</span>` : "") +
+      (prefs.rsi ? `<span style="color:#6c8cff">RSI ${nf(r && r.value, 1)}</span>` : "");
+  }
+  chart.subscribeCrosshairMove((p) => updateLegend(p));
+
+  // ---------- drawing tools ----------
+  const status = (s) => { $("#status").textContent = s || ""; };
+  const hintFor = { cursor: "", hline: "H-line: click a price level", trend: "Trend line: click the first point", rect: "Box: click the first corner", measure: "Measure: click the start point" };
+  function setTool(t) {
+    state.tool = t; state.pending = null;
+    if (t !== "measure") { state.measure = null; $("#measure").style.display = "none"; }
+    document.querySelectorAll("button.tool").forEach((b) => b.classList.toggle("on", b.dataset.t === t));
+    status(hintFor[t]); redraw();
+  }
+  document.querySelectorAll("button.tool").forEach((b) => b.onclick = () => setTool(state.tool === b.dataset.t && b.dataset.t !== "cursor" ? "cursor" : b.dataset.t));
+  window.addEventListener("keydown", (e) => { if (e.key === "Escape") setTool("cursor"); });
+
+  const live = { h: [], trend: [] };
+  const saveDraw = () => ls.set("tp:" + P.symbol + ":draw", state.drawings);
+  function materialize(d) {
+    if (d.type === "h") live.h.push({ d, line: candles.createPriceLine({ price: d.price, color: "#f5b041", lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: "" }) });
+  }
+  state.drawings.forEach(materialize);
+  $("#clear").onclick = () => {
+    live.h.forEach((x) => candles.removePriceLine(x.line));
+    live.h = []; state.drawings = []; state.measure = null; $("#measure").style.display = "none";
+    saveDraw(); setTool("cursor");
+  };
+  function showMeasure(m) {
+    const i1 = snapIdx(m.t1), i2 = snapIdx(m.t2), bars = Math.abs(i2 - i1);
+    const dp = m.p2 - m.p1, pct = (dp / m.p1) * 100, secs = Math.abs(m.t2 - m.t1);
+    const dur = secs >= 86400 ? (secs / 86400).toFixed(1) + "d" : secs >= 3600 ? (secs / 3600).toFixed(1) + "h" : Math.round(secs / 60) + "m";
+    const el = $("#measure");
+    el.style.display = "block"; el.style.color = dp >= 0 ? "#26a69a" : "#ef5350";
+    el.textContent = `${dp >= 0 ? "+" : ""}${dp.toFixed(2)} (${dp >= 0 ? "+" : ""}${pct.toFixed(2)}%)  ·  ${bars} bars  ·  ${dur}`;
+    const xa = xOf(m.t1), xb = xOf(m.t2), ya = yOf(m.p1), yb = yOf(m.p2);
+    if ([xa, xb, ya, yb].every((v) => v != null)) { el.style.left = Math.max((xa + xb) / 2 - 80, 4) + "px"; el.style.top = Math.max(Math.min(ya, yb) - 34, 40) + "px"; }
+  }
+  chart.subscribeClick((p) => {
+    if (!p.point || p.time == null || state.tool === "cursor") return;
+    const price = candles.coordinateToPrice(p.point.y);
+    if (price == null) return;
+    const t = tsOf(p.time), pt = { t, p: price };
+    if (state.tool === "hline") {
+      const d = { type: "h", price }; state.drawings.push(d); materialize(d); saveDraw(); setTool("cursor");
+    } else if (!state.pending) {
+      state.pending = pt; status({ trend: "Trend line: click the second point", rect: "Box: click the opposite corner", measure: "Measure: click the end point" }[state.tool]); redraw();
+    } else {
+      const a = state.pending; state.pending = null;
+      if (state.tool === "trend") { const d = { type: "trend", t1: a.t, p1: a.p, t2: t, p2: price }; state.drawings.push(d); saveDraw(); setTool("cursor"); }
+      else if (state.tool === "rect") { const d = { type: "rect", t1: a.t, p1: a.p, t2: t, p2: price }; state.drawings.push(d); saveDraw(); setTool("cursor"); }
+      else if (state.tool === "measure") { state.measure = { t1: a.t, p1: a.p, t2: t, p2: price }; showMeasure(state.measure); status("Measure: Esc to clear"); redraw(); }
+    }
+  });
+  chart.timeScale().subscribeVisibleTimeRangeChange(() => {
+    if (state.measure && state.measure.t2) showMeasure(state.measure);
+    const r = chart.timeScale().getVisibleRange();
+    if (r) ls.set("tp:" + P.symbol + ":" + prefs.tf + ":range", { from: r.from, to: r.to });
+  });
+
+  applyToggles();
+  setTool("cursor");
+  setTF(prefs.tf in P.datasets ? prefs.tf : "15m", false);
+})();
+</script>
+</body>
+</html>

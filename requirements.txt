@@ -10,7 +10,7 @@ torch
 requests
 python-dotenv
 sqlalchemy
-streamlit
+streamlit>=1.40
 plotly
 pandas_market_calendars
 pytest

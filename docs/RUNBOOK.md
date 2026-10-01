@@ -36,6 +36,16 @@ streamlit run src/dashboard/app.py                        # live dashboard (seco
 ```
 The scheduler needs a machine (or small VM) that stays awake and online all session.
 
+## Dashboard guide
+`streamlit run src/dashboard/app.py` (auto-refreshes every 30 s; change in the sidebar).
+- **Top bar + tape:** paper/live badge, market-window state, kill-switch flag, and a scrolling tape of prices + FinBERT-scored headlines.
+- **Chart (TradingView-style):** crosshair with OHLCV/EMA/RSI legend, scroll-zoom/drag-pan, 15m/30m/1H/1D, volume + RSI panes, log scale, magnet crosshair, fullscreen.
+  SMC overlays (toggle each): order blocks, FVG, BOS/CHoCH (swing), internal structure, swing levels, premium/discount, EQH/EQL, signals, your trades, SL/TP lines.
+  Drawing tools: H-line, trend line, box, measure (Δprice, %, bars, time); drawings persist per symbol in your browser. `Esc` cancels a tool.
+- **Match the chart to TradingView:** the sidebar toggle “Include extended-hours bars” (and `INCLUDE_EXTENDED_HOURS` in `.env`) must equal your TradingView chart’s Extended-hours setting.
+- **Right rail:** watchlist (price, change, sparkline, sentiment, confluence dots, fresh-signal badge), live news with sentiment chips + “Fetch latest”, and the decision feed (why each signal was taken or blocked).
+- **Tabs:** Scanner (confluence screen), Trades, Performance, Decision log, ML model card (shows when the model is *not* validated), System health, Settings (risk limits, kill switch).
+
 ## 5. Safety
 - **Kill switch:** `touch KILL_SWITCH` blocks all new orders immediately; `rm KILL_SWITCH` re-enables.
 - Positions are flattened 5 min before the close; no new entries in the last 15 min.

@@ -10,7 +10,7 @@ An automated trading agent that ports an existing Pine Script "triple confirmati
 
 ## Status
 
-**Built and tested (offline):** data pipeline, SMC + triple-confirmation port (with TradingView validation tooling), news + FinBERT sentiment, walk-forward ML filter, decision engine with risk rules, Alpaca/simulated execution with trade logging and reconciliation, market-hours scheduler, Streamlit dashboard. ~105 tests pass without any API keys.
+**Built and tested (offline):** data pipeline, SMC + triple-confirmation port (with TradingView validation tooling), news + FinBERT sentiment, walk-forward ML filter, decision engine with risk rules, Alpaca/simulated execution with trade logging and reconciliation, market-hours scheduler, interactive dashboard (TradingView-style chart via the vendored, Apache-2.0 Lightweight Charts library). ~115 tests pass without any API keys.
 
 **Needs you (real keys / real market):** backfill + train on real data, TradingView validation exports, then the 2–4 week paper run. Step-by-step: [`docs/RUNBOOK.md`](docs/RUNBOOK.md). Plan: [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md), checklist: [`TASKS.md`](TASKS.md).
 
@@ -117,3 +117,6 @@ Full instructions (backfill, train, scheduler, kill switch): [`docs/RUNBOOK.md`]
 ## License / disclaimer
 
 Personal project scaffold. Not affiliated with Alpaca, Robinhood, Finnhub, or Anthropic. No warranty; use at your own risk, especially anything that touches live order execution.
+
+### Third-party
+The dashboard chart uses [TradingView Lightweight Charts](https://github.com/tradingview/lightweight-charts) (Apache-2.0), vendored in `src/dashboard/static/` with its license; its on-chart TradingView attribution logo is intentionally left on.

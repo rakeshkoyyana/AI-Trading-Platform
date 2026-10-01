@@ -1,15 +1,18 @@
 """
-Streamlit dashboard (read-only view of the SQLite DB).
+SMC Agent dashboard (Streamlit).
 
     streamlit run src/dashboard/app.py
-    DATABASE_URL=sqlite:///data/demo.db streamlit run src/dashboard/app.py   # offline demo data
+    DATABASE_URL=sqlite:///data/demo.db streamlit run src/dashboard/app.py     # offline demo data
 
-Sections: KPI cards, equity curve (paper/live shading), P&L histogram, win rate by signal type and
-by sentiment bucket, candlestick with entry/exit + SMC overlays, sortable trade log, system health.
+Layout: top bar + scrolling price/news tape, KPI cards, a TradingView-style interactive chart with
+SMC overlays and drawing tools, a right rail (watchlist, live news, decision feed) and tabs for the
+scanner, trades, performance, decision log, ML model card, system health and settings.
+The dashboard is read-only with respect to the broker; the only thing it can write is the KILL_SWITCH file.
 """
 from __future__ import annotations
 
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # so `streamlit run` finds `src`
@@ -17,14 +20,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # so `streamlit ru
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-from plotly.subplots import make_subplots
+import streamlit.components.v1 as components
 
 from src.config import get_settings
+from src.dashboard import data as D
 from src.dashboard import metrics as m
+from src.dashboard import theme as T
+from src.dashboard.chart_component import chart_html
 from src.data_ingestion.backfill import latest_bar_time, load_bars
 from src.db.schema import get_engine, init_db
 
-st.set_page_config(page_title="AI Trading Platform", page_icon="📈", layout="wide")
+st.set_page_config(page_title="SMC Agent", page_icon="📈", layout="wide", initial_sidebar_state="collapsed")
+st.html(T.CSS)
+
+S = get_settings()
 
 
 @st.cache_resource
@@ -34,239 +43,392 @@ def _engine():
     return e
 
 
-@st.cache_data(ttl=30)
-def _trades():
-    return m.load_trades(_engine())
+engine = _engine()
+DB = S.database_url
+
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _render_html(html: str, height: int) -> None:
+    """Embed a self-contained HTML page (st.iframe on current Streamlit, components.html on older)."""
+    if hasattr(st, "iframe"):
+        st.iframe(html, height=height)
+    else:  # pragma: no cover - older Streamlit
+        components.html(html, height=height, scrolling=False)
+
+
+# ------------------------------------------------------------------ cached loaders
+@st.cache_data(ttl=45)
+def _trades(db: str) -> pd.DataFrame:
+    return m.load_trades(engine)
 
 
 @st.cache_data(ttl=60)
-def _bars(symbol: str, timeframe: str, days: int):
-    since = m.utcnow() - pd.Timedelta(days=days)
-    return load_bars(_engine(), symbol, timeframe, since=since)
+def _bars(db: str, sym: str, days: int, ext: bool, last_ts: str) -> pd.DataFrame:
+    return load_bars(engine, sym, S.timeframe, since=utc_now() - timedelta(days=days), extended_hours=ext)
 
 
 @st.cache_data(ttl=120)
-def _context(symbol: str, timeframe: str):
+def _ctx(db: str, sym: str, ext: bool, last_ts: str):
     from src.smc_logic.pipeline import compute_context
 
-    bars = load_bars(_engine(), symbol, timeframe, since=m.utcnow() - pd.Timedelta(days=60))
+    bars = _bars(db, sym, 60, ext, last_ts)
     return compute_context(bars) if len(bars) >= 250 else None
 
 
-def money(x: float | None) -> str:
-    return "—" if x is None else f"{'-' if x < 0 else ''}${abs(x):,.2f}"
+@st.cache_data(ttl=60)
+def _news(db: str, limit: int, hours: int) -> pd.DataFrame:
+    return D.load_news_feed(engine, limit=limit, hours=hours)
 
 
-def pct(x: float | None) -> str:
-    return "—" if x is None else f"{x * 100:.1f}%"
+@st.cache_data(ttl=60)
+def _events(db: str, hours: int) -> pd.DataFrame:
+    return m.load_events(engine, hours=hours)
 
 
-def num(x: float | None, d: int = 2) -> str:
-    return "—" if x is None else f"{x:.{d}f}"
+def _last_ts(sym: str) -> str:
+    t = latest_bar_time(engine, sym, S.timeframe)
+    return str(t) if t else "none"
 
 
-s = get_settings()
-engine = _engine()
+def _sentiment(sym: str) -> dict:
+    try:
+        from src.sentiment.aggregate import get_rolling_sentiment
+
+        return get_rolling_sentiment(sym, window_hours=24.0, engine=engine)
+    except Exception:  # noqa: BLE001
+        return {"score": None, "n": 0}
+
+
+@st.cache_data(ttl=60)
+def _scan_rows(db: str, tickers: tuple, ext: bool, stamp: str) -> list[dict]:
+    rows = []
+    for sym in tickers:
+        lt = _last_ts(sym)
+        bars = _bars(db, sym, 60, ext, lt)
+        rows.append(D.scan_symbol(sym, bars, _ctx(db, sym, ext, lt), _sentiment(sym)))
+    return rows
+
 
 # ------------------------------------------------------------------ sidebar
 with st.sidebar:
-    st.title("📈 AI Trading Platform")
+    st.markdown("### Controls")
     start_equity = st.number_input("Starting equity ($)", value=100_000.0, step=1_000.0)
-    mode_filter = st.radio("Trades", ["All", "paper", "live"], horizontal=True)
-    symbols = st.multiselect("Symbols", s.tickers, default=[])
-    if st.button("Refresh now"):
+    refresh = st.selectbox("Auto-refresh", ["Off", "15s", "30s", "60s"], index=2)
+    ext = st.toggle("Include extended-hours bars", value=S.include_extended_hours,
+                    help="Match this to your TradingView chart's Extended hours setting.")
+    mode_filter = st.radio("Trades shown", ["All", "paper", "live"], horizontal=True)
+    if st.button("Clear caches"):
         st.cache_data.clear()
-    st.caption(f"DB: `{s.database_url.split('///')[-1]}`  ·  times in America/Chicago")
+    st.caption(f"DB `{DB.split('///')[-1]}`  ·  times in America/Chicago")
 
-trades = _trades()
-if mode_filter != "All" and not trades.empty:
-    trades = trades[trades["mode"] == mode_filter]
-if symbols and not trades.empty:
-    trades = trades[trades["symbol"].isin(symbols)]
-
-prob, model_ver, prob_ts = m.latest_model_probability(engine)
+RUN_EVERY = None if refresh == "Off" else refresh
+tickers = tuple(S.tickers)
+trades_all = _trades(DB)
+trades = trades_all if mode_filter == "All" or trades_all.empty else trades_all[trades_all["mode"] == mode_filter]
+stamp = "|".join(_last_ts(t) for t in tickers)
+rows = _scan_rows(DB, tickers, ext, stamp)
+by_sym = {r["symbol"]: r for r in rows}
+prob, model_ver, _ = m.latest_model_probability(engine)
 k = m.kpis(trades, start_equity, model_prob=prob)
 
-mode_badge = "🔴 LIVE" if s.is_live else "🟢 PAPER"
-st.header(f"Dashboard  {mode_badge}")
 
-if trades.empty:
-    st.info("No trades yet. Once the scheduler runs (or you load demo data with "
-            "`python -m src.backtest.replay`), results appear here.")
+# ------------------------------------------------------------------ live header + tape
+def _market_state() -> tuple[bool, str | None]:
+    try:
+        from src.scheduler.market_hours import is_trading_window_now, next_session_open
 
-# ----------------------------------------------------------------- KPI cards
-c = st.columns(5)
-c[0].metric("Net P&L today", money(k["pnl_today"]))
-c[1].metric("This week", money(k["pnl_week"]))
-c[2].metric("This month", money(k["pnl_month"]))
-c[3].metric("All-time", money(k["pnl_all"]))
-c[4].metric("Open exposure", money(k["open_exposure"]))
-c = st.columns(6)
-c[0].metric("Win rate", pct(k["win_rate"]), f"{k['wins']}W / {k['losses']}L", delta_color="off")
-c[1].metric("Avg win / avg loss", num(k["win_loss_ratio"]))
-c[2].metric("Profit factor", num(k["profit_factor"]))
-c[3].metric("Closed trades", k["trades"])
-c[4].metric("Sharpe (daily)", num(k["sharpe"]))
-c[5].metric("Max drawdown", pct(abs(k["max_drawdown"]) if k["max_drawdown"] else 0.0))
-c = st.columns(2)
-c[0].metric("Latest model confidence", pct(prob) if prob is not None else "no model yet",
-            help=f"model {model_ver}" if model_ver else "Train with `python -m src.ml.train`")
-if k["trades"] and k["trades"] < 30:
-    c[1].info(f"Only {k['trades']} closed trades — treat every ratio above as noise until n ≳ 30–50.")
+        now = utc_now()
+        if is_trading_window_now(now, S):
+            return True, None
+        return False, next_session_open(now, S).strftime("%a %H:%M CT")
+    except Exception:  # noqa: BLE001
+        return False, None
 
-tab_perf, tab_chart, tab_log, tab_health = st.tabs(["Performance", "Chart", "Trade log", "System health"])
 
-# --------------------------------------------------------------- performance
-with tab_perf:
-    eq = m.equity_curve(trades, start_equity)
-    left, right = st.columns([3, 2])
-    with left:
-        st.subheader("Equity curve")
-        if eq.empty:
-            st.caption("No closed trades yet.")
+@st.fragment(run_every=RUN_EVERY)
+def header_and_tape():
+    is_open, nxt = _market_state()
+    local = pd.Timestamp(utc_now(), tz="UTC").tz_convert(m.TZ)
+    st.html(T.topbar(S.is_live, is_open, nxt, S.kill_switch_active, start_equity + k["pnl_all"], local.strftime("%a %b %d  %H:%M:%S CT")))
+    nf = _news(DB, 30, 48)
+    news = [dict(symbol=r.symbol, headline=r.headline, score=r.score) for r in nf.head(16).itertuples()]
+    st.html(T.ticker_tape(rows, news))
+
+
+header_and_tape()
+
+# ------------------------------------------------------------------ KPI cards
+eq = m.equity_curve(trades, start_equity)
+eq_spark = eq["equity"].tail(40).tolist() if not eq.empty else None
+pnl_spark = m.closed(trades)["pnl"].cumsum().tail(40).tolist() if not trades.empty and k["trades"] else None
+dd = abs(k["max_drawdown"]) * 100 if k["max_drawdown"] else 0.0
+open_n = int(trades["status"].isin(["open", "filled"]).sum()) if not trades.empty else 0
+cards = [
+    T.kpi("Net P&L today", T.money(k["pnl_today"], True), f"week {T.money(k['pnl_week'], True)}", pnl_spark, T.UP if k["pnl_today"] >= 0 else T.DOWN, T.tone(k["pnl_today"])),
+    T.kpi("Month / all-time", T.money(k["pnl_month"], True), f"all-time {T.money(k['pnl_all'], True)}", eq_spark, T.ACCENT, T.tone(k["pnl_month"])),
+    T.kpi("Win rate", T.pct(k["win_rate"] * 100 if k["win_rate"] is not None else None), f"{k['wins']}W · {k['losses']}L · {k['trades']} trades"),
+    T.kpi("Avg win / avg loss", f"{k['win_loss_ratio']:.2f}" if k["win_loss_ratio"] else "—", f"profit factor {k['profit_factor']:.2f}" if k["profit_factor"] else "profit factor —"),
+    T.kpi("Sharpe (daily)", f"{k['sharpe']:.2f}" if k["sharpe"] is not None else "—", f"max drawdown {dd:.1f}%"),
+    T.kpi("Open exposure", T.money(k["open_exposure"]), f"{open_n} open position(s)"),
+    T.kpi("Model confidence", T.pct(prob * 100) if prob is not None else "no model", f"{model_ver}" if model_ver else "train: python -m src.ml.train"),
+]
+st.html('<div class="kpis">' + "".join(cards) + "</div>")
+if 0 < k["trades"] < 30:
+    st.html(f'<div class="banner warn">Only <b>{k["trades"]}</b> closed trades so far — treat win rate, Sharpe and ratios as noise until n ≳ 30–50.</div>')
+
+# ------------------------------------------------------------------ main: chart + right rail
+left, right = st.columns([3.35, 1.15], gap="small")
+
+with left:
+    sym = st.pills("Symbol", list(tickers), default=tickers[0], selection_mode="single", label_visibility="collapsed", key="sym") or tickers[0]
+
+    @st.fragment(run_every=("60s" if RUN_EVERY else None))
+    def chart_panel():
+        lt = _last_ts(sym)
+        bars = _bars(DB, sym, 60, ext, lt)
+        if bars.empty:
+            st.info(f"No bars stored for {sym}. Run `python -m src.data_ingestion.backfill`.")
+            return
+        payload = D.build_chart_payload(bars, _ctx(DB, sym, ext, lt), trades_all, sym)
+        _render_html(chart_html(payload), 760)
+
+    chart_panel()
+
+    rt = trades.copy()
+    if not rt.empty:
+        rt["time"] = rt["exit_time"].fillna(rt["entry_time"])
+        rt = rt.sort_values("time", ascending=False, na_position="last").head(8)
+    st.html('<div class="panel"><h4>Recent trades <span class="mut" style="text-transform:none;letter-spacing:0">open positions first appear here as “open/filled”</span></h4>'
+            f'{T.recent_trades(rt.to_dict("records") if not rt.empty else [], utc_now())}</div>')
+
+with right:
+    st.html('<div class="panel"><h4>Watchlist <span class="mut" style="text-transform:none;letter-spacing:0">dots = confluence</span></h4>'
+            f'<div class="scroll" style="max-height:330px">{T.watchlist(rows, sym)}</div></div>')
+
+    @st.fragment(run_every=RUN_EVERY)
+    def news_panel():
+        c1, c2 = st.columns([1.4, 1])
+        scope = c1.selectbox("News", ["All", sym], label_visibility="collapsed", key="news_scope")
+        if c2.button("Fetch latest", key="fetch_news", help="Pull Finnhub/NewsAPI + score with FinBERT (needs keys)"):
+            with st.spinner("Fetching news…"):
+                try:
+                    from src.sentiment.aggregate import refresh_sentiment
+
+                    refresh_sentiment(list(tickers), engine=engine)
+                    st.cache_data.clear()
+                except Exception as exc:  # noqa: BLE001
+                    st.warning(f"News fetch failed: {exc}")
+        nf = _news(DB, 80, 72)
+        if scope != "All":
+            nf = nf[nf["symbol"] == scope]
+        items = nf.head(40).to_dict("records")
+        st.html(f'<div class="panel"><h4>Live news <span class="mut" style="text-transform:none;letter-spacing:0">{len(nf)} items · FinBERT</span></h4>'
+                f'<div class="scroll" style="max-height:360px">{T.news_list(items, utc_now())}</div></div>')
+
+    news_panel()
+
+    ev = _events(DB, 72)
+    dec = ev[ev["kind"] == "decision"].head(25).to_dict("records") if not ev.empty else []
+    st.html(f'<div class="panel"><h4>Decision feed <span class="mut" style="text-transform:none;letter-spacing:0">why we did / didn’t trade</span></h4>'
+            f'<div class="scroll" style="max-height:250px">{T.decision_list(dec, utc_now())}</div></div>')
+
+# ------------------------------------------------------------------ tabs
+tab_scan, tab_trades, tab_perf, tab_dec, tab_ml, tab_sys, tab_set = st.tabs(
+    ["Scanner", "Trades", "Performance", "Decision log", "ML model", "System", "Settings"])
+
+# ---- Scanner
+with tab_scan:
+    st.caption("Confluence = how many of the six conditions agree with the current EMA bias (trend, momentum band, volume spike, "
+               "premium/discount zone, swing structure, order block). It is a screening aid, not a prediction — see the ML tab for evidence.")
+    sc = pd.DataFrame([{
+        "Symbol": r["symbol"], "Price": r.get("price"), "Chg %": r.get("chg_pct"), "Bias": (r.get("bias") or "—").upper(),
+        "Last signal": (f"{r['signal'].upper()} · {r['signal_age']}b ago" if r.get("signal") in ("long", "short") else "—"),
+        "Confluence": r.get("confluence"), "RSI": r.get("rsi"), "Vol ×avg": r.get("vol_ratio"), "Zone": r.get("zone"),
+        "Structure": r.get("structure"), "Sentiment": r.get("sentiment") if r.get("news_n") else None,
+    } for r in rows]).sort_values("Confluence", ascending=False, na_position="last")
+    st.dataframe(sc, hide_index=True, width="stretch", column_config={
+        "Price": st.column_config.NumberColumn(format="%.2f"), "Chg %": st.column_config.NumberColumn(format="%+.2f%%"),
+        "Confluence": st.column_config.ProgressColumn(min_value=0, max_value=6, format="%d / 6"),
+        "Sentiment": st.column_config.NumberColumn(format="%+.2f"), "RSI": st.column_config.NumberColumn(format="%.1f"),
+        "Vol ×avg": st.column_config.NumberColumn(format="%.2f")})
+    r = by_sym.get(sym, {})
+    if r.get("checks"):
+        st.markdown(f"**{sym} — confluence breakdown ({(r.get('bias') or '').upper()} bias)**")
+        st.html('<div style="display:flex;gap:8px;flex-wrap:wrap">' + "".join(
+            f'<span class="pill {"up" if v else ""}">{"✓" if v else "·"} {T.esc(name)}</span>' for name, v in r["checks"].items()) + "</div>")
+
+# ---- Trades
+with tab_trades:
+    if trades.empty:
+        st.info("No trades yet. Once the scheduler runs (or you load demo data with `python -m src.backtest.replay`) they appear here.")
+    else:
+        op = trades[trades["status"].isin(["open", "filled"])].copy()
+        st.subheader(f"Open positions ({len(op)})")
+        if op.empty:
+            st.caption("Flat.")
         else:
+            op["last"] = op["symbol"].map(lambda s_: by_sym.get(s_, {}).get("price"))
+            sign = op["direction"].map({"long": 1, "short": -1})
+            op["unrealised"] = (op["last"] - op["entry_price"]) * op["qty"] * sign
+            st.dataframe(op[["symbol", "direction", "qty", "entry_price", "last", "unrealised", "stop_loss", "take_profit", "model_probability", "mode"]],
+                         hide_index=True, width="stretch")
+        st.subheader("Trade log")
+        f1, f2 = st.columns(2)
+        stat = f1.multiselect("Status", sorted(trades["status"].unique()), default=sorted(trades["status"].unique()))
+        syms = f2.multiselect("Symbols", list(tickers), default=[])
+        view = trades[trades["status"].isin(stat)]
+        view = view[view["symbol"].isin(syms)] if syms else view
+        v = view.copy()
+        v["entry (CT)"] = m.to_local(v["entry_time"]).dt.strftime("%m-%d %H:%M") if v["entry_time"].notna().any() else None
+        v["exit (CT)"] = m.to_local(v["exit_time"]).dt.strftime("%m-%d %H:%M") if v["exit_time"].notna().any() else None
+        cols = ["id", "symbol", "direction", "entry (CT)", "exit (CT)", "entry_price", "exit_price", "qty", "pnl", "model_probability",
+                "sentiment_at_entry", "stop_loss", "take_profit", "mode", "status", "note"]
+        st.dataframe(v.sort_values("id", ascending=False)[cols], hide_index=True, width="stretch", column_config={
+            "pnl": st.column_config.NumberColumn("P&L ($)", format="%.2f"), "model_probability": st.column_config.NumberColumn("P(win)", format="%.2f"),
+            "sentiment_at_entry": st.column_config.NumberColumn("Sentiment", format="%+.2f")})
+        st.download_button("Download CSV", v[cols].to_csv(index=False), "trades.csv", "text/csv")
+
+# ---- Performance
+with tab_perf:
+    cl = m.closed(trades)
+    if cl.empty:
+        st.info("No closed trades yet.")
+    else:
+        a, b = st.columns([3, 2])
+        with a:
+            st.markdown("**Equity curve**")
             fig = go.Figure()
-            t_local = m.to_local(eq["time"])
-            # one coloured segment per mode so paper/live runs are visually separate
-            for mode, color in (("paper", "#2E86DE"), ("live", "#E67E22")):
+            tl = m.to_local(eq["time"])
+            for mode, color in (("paper", T.ACCENT), ("live", T.AMBER)):
                 seg = eq["mode"] == mode
                 if seg.any():
-                    fig.add_trace(go.Scatter(x=t_local[seg], y=eq["equity"][seg], mode="lines+markers",
-                                             name=mode, line=dict(color=color, width=2), marker=dict(size=4)))
-            fig.add_hline(y=start_equity, line_dash="dot", line_color="gray")
-            fig.update_layout(height=360, margin=dict(l=10, r=10, t=10, b=10), yaxis_title="Equity ($)")
+                    fig.add_trace(go.Scatter(x=tl[seg], y=eq["equity"][seg], mode="lines+markers", name=mode, line=dict(color=color, width=2),
+                                             marker=dict(size=4), fill="tozeroy" if False else None))
+            fig.add_hline(y=start_equity, line_dash="dot", line_color=T.MUTED)
+            fig.update_layout(**T.PLOT, height=330, yaxis_title="Equity ($)")
             st.plotly_chart(fig, width="stretch")
-    with right:
-        st.subheader("P&L per trade")
-        cl = m.closed(trades)
-        if cl.empty:
-            st.caption("No closed trades yet.")
+        with b:
+            st.markdown("**P&L per trade**")
+            fig = go.Figure(go.Histogram(x=cl["pnl"], nbinsx=25, marker_color=T.ACCENT, opacity=.85))
+            fig.add_vline(x=0, line_color=T.MUTED)
+            fig.update_layout(**T.PLOT, height=330, xaxis_title="P&L ($)", yaxis_title="Trades")
+            st.plotly_chart(fig, width="stretch")
+        c, d, e = st.columns(3)
+        dp = m.daily_pnl(trades)
+        with c:
+            st.markdown("**Daily P&L**")
+            fig = go.Figure(go.Bar(x=[str(x) for x in dp.index], y=dp.values, marker_color=[T.UP if x >= 0 else T.DOWN for x in dp.values]))
+            fig.update_layout(**T.PLOT, height=280)
+            st.plotly_chart(fig, width="stretch")
+        for col, title, df in ((d, "Win rate by signal type", m.winrate_by_signal(trades)), (e, "Win rate by sentiment at entry", m.winrate_by_sentiment(trades))):
+            with col:
+                st.markdown(f"**{title}**")
+                if df.empty:
+                    st.caption("Not enough data yet.")
+                    continue
+                fig = go.Figure(go.Bar(x=df["group"], y=df["win_rate"] * 100, text=[f"n={int(n)}" for n in df["trades"]], marker_color=T.UP))
+                fig.add_hline(y=50, line_dash="dot", line_color=T.MUTED)
+                fig.update_layout(**T.PLOT, height=280, yaxis_range=[0, 100], yaxis_title="%")
+                st.plotly_chart(fig, width="stretch")
+        rs = m.rolling_sharpe(trades, start_equity)
+        if len(rs.dropna()) >= 10:
+            st.markdown("**Rolling Sharpe (20 trading days)**")
+            st.line_chart(rs.dropna())
+
+# ---- Decision log
+with tab_dec:
+    ev = _events(DB, 24 * 14)
+    dec = ev[ev["kind"] == "decision"] if not ev.empty else ev
+    if dec.empty:
+        st.info("No decisions logged yet.")
+    else:
+        taken = int(dec["message"].str.contains("-> TRADE", regex=False).sum())
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Signals evaluated (14d)", len(dec))
+        c2.metric("Taken", taken)
+        c3.metric("Blocked", len(dec) - taken)
+        q = st.text_input("Filter (symbol, gate name, e.g. model, daily_loss_halt, session_cutoff)")
+        shown = dec[dec["message"].str.contains(q, case=False, regex=False)] if q else dec
+        for r_ in shown.head(60).itertuples():
+            ok = "-> TRADE" in r_.message
+            with st.expander(f"{'🟢' if ok else '⚪'}  {m.to_local(pd.Series([r_.timestamp])).iat[0]:%m-%d %H:%M}  ·  {r_.message.splitlines()[0]}"):
+                st.code(r_.message, language="text")
+
+# ---- ML model
+with tab_ml:
+    card = D.load_model_card()
+    if card is None:
+        st.info("No model trained yet. Run `python -m src.ml.train` (needs signals: `python -m src.smc_logic.backfill_signals`).")
+    else:
+        mt = card.get("metrics", {})
+        improves = bool(mt.get("improves"))
+        if improves:
+            st.html('<div class="banner good"><b>Validated:</b> the filter beat the raw signal out-of-sample. It may gate trades.</div>')
         else:
-            fig = go.Figure(go.Histogram(x=cl["pnl"], nbinsx=25, marker_color="#7F8C8D"))
-            fig.add_vline(x=0, line_color="black")
-            fig.update_layout(height=360, margin=dict(l=10, r=10, t=10, b=10), xaxis_title="P&L ($)", yaxis_title="Trades")
+            st.html('<div class="banner bad"><b>Not validated:</b> out-of-sample, the filter did <b>not</b> beat the raw signal. '
+                    'The engine ignores this model unless <code>USE_UNVALIDATED_MODEL=true</code>. That is a legitimate finding about the strategy, not a bug.</div>')
+        c = st.columns(5)
+        c[0].metric("Model", card.get("version", card["file"]))
+        c[1].metric("OOS AUC", f"{mt.get('auc', float('nan')):.3f}" if mt.get("auc") is not None else "—", help="0.5 = no skill")
+        unf, flt = mt.get("unfiltered", {}) or {}, mt.get("filtered", {}) or {}
+        c[2].metric("Unfiltered win rate", f"{unf.get('win_rate', float('nan')) * 100:.1f}%" if unf else "—", f"n={unf.get('n', '—')}", delta_color="off")
+        c[3].metric("Filtered win rate", f"{flt.get('win_rate', float('nan')) * 100:.1f}%" if flt else "—", f"n={flt.get('n', '—')}", delta_color="off")
+        c[4].metric("Trained on", f"{card.get('trained_on', {}).get('n', '—')} signals")
+        top = card.get("top_features") or {}
+        if top:
+            fig = go.Figure(go.Bar(x=list(top.values())[::-1], y=list(top.keys())[::-1], orientation="h", marker_color=T.ACCENT))
+            fig.update_layout(**T.PLOT, height=320, title="Top features (importance — not evidence of edge)")
             st.plotly_chart(fig, width="stretch")
+        with st.expander("MODEL_LOG.md"):
+            st.markdown(card.get("log", ""))
 
-    a, b = st.columns(2)
-    for col, title, df in ((a, "Win rate by signal type", m.winrate_by_signal(trades)),
-                           (b, "Win rate by sentiment at entry", m.winrate_by_sentiment(trades))):
-        with col:
-            st.subheader(title)
-            if df.empty:
-                st.caption("Not enough data yet.")
-                continue
-            fig = go.Figure(go.Bar(x=df["group"], y=df["win_rate"] * 100, text=[f"n={int(n)}" for n in df["trades"]],
-                                   marker_color="#27AE60"))
-            fig.add_hline(y=50, line_dash="dot", line_color="gray")
-            fig.update_layout(height=300, margin=dict(l=10, r=10, t=10, b=10), yaxis_title="Win rate (%)", yaxis_range=[0, 100])
-            st.plotly_chart(fig, width="stretch")
+# ---- System
+with tab_sys:
+    latest = max((t for t in (latest_bar_time(engine, x, S.timeframe) for x in tickers) if t), default=None)
+    h = m.health(engine, latest, trading_mode=S.trading_mode)
+    c = st.columns(5)
+    c[0].metric("Status", "OK" if h["status"] == "ok" else "ATTENTION")
+    c[1].metric("Mode", h["mode"].upper())
+    c[2].metric("Last scheduler cycle", "never" if h["last_cycle"] is None else f"{h['minutes_since_cycle']:.0f} min ago")
+    c[3].metric("Errors (24h)", h["errors_24h"])
+    c[4].metric("Newest bar", "—" if h["data_stale_minutes"] is None else f"{h['data_stale_minutes']:.0f} min old")
+    fresh = []
+    for x in tickers:
+        t = latest_bar_time(engine, x, S.timeframe)
+        fresh.append({"Symbol": x, "Newest bar (CT)": None if t is None else m.to_local(pd.Series([t])).iat[0].strftime("%m-%d %H:%M"),
+                      "Age (min)": None if t is None else round((utc_now() - t).total_seconds() / 60)})
+    st.dataframe(pd.DataFrame(fresh), hide_index=True, width="stretch")
+    ev = _events(DB, 72)
+    if not ev.empty:
+        kinds = st.multiselect("Event types", sorted(ev["kind"].unique()), default=[x for x in sorted(ev["kind"].unique()) if x not in ("cycle", "decision")])
+        e2 = ev[ev["kind"].isin(kinds)].copy()
+        e2["time (CT)"] = m.to_local(e2["timestamp"]).dt.strftime("%m-%d %H:%M:%S")
+        st.dataframe(e2[["time (CT)", "kind", "message"]].head(300), hide_index=True, width="stretch")
 
-    rs = m.rolling_sharpe(trades, start_equity)
-    if len(rs.dropna()) >= 10:
-        st.subheader("Rolling Sharpe (20 trading days)")
-        st.line_chart(rs.dropna())
-
-# --------------------------------------------------------------------- chart
-with tab_chart:
-    cc = st.columns([1, 1, 1, 1])
-    sym = cc[0].selectbox("Symbol", s.tickers)
-    days = cc[1].slider("Days", 2, 30, 8)
-    show_smc = cc[2].checkbox("SMC overlays", True)
-    show_ema = cc[3].checkbox("EMA 9/21", True)
-    bars = _bars(sym, s.timeframe, days)
-    if bars.empty:
-        st.info(f"No bars stored for {sym}. Run `python -m src.data_ingestion.backfill`.")
-    else:
-        ctx = _context(sym, s.timeframe) if show_smc or show_ema else None
-        if ctx is not None:
-            ctx = ctx[ctx["timestamp"] >= bars["timestamp"].iat[0]].reset_index(drop=True)
-        x = m.to_local(bars["timestamp"])
-        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.8, 0.2], vertical_spacing=0.02)
-        fig.add_trace(go.Candlestick(x=x, open=bars["open"], high=bars["high"], low=bars["low"], close=bars["close"],
-                                     name=sym, increasing_line_color="#26A69A", decreasing_line_color="#EF5350"), row=1, col=1)
-        fig.add_trace(go.Bar(x=x, y=bars["volume"], marker_color="#B0BEC5", name="Volume"), row=2, col=1)
-        if ctx is not None and len(ctx):
-            cx = m.to_local(ctx["timestamp"])
-            if show_ema:
-                fig.add_trace(go.Scatter(x=cx, y=ctx["ema_fast"], name="EMA9", line=dict(width=1, color="#F39C12")), row=1, col=1)
-                fig.add_trace(go.Scatter(x=cx, y=ctx["ema_slow"], name="EMA21", line=dict(width=1, color="#8E44AD")), row=1, col=1)
-            if show_smc:
-                for hi, lo, color, nm in (("bull_ob_high", "bull_ob_low", "rgba(38,166,154,0.25)", "Bull OB"),
-                                          ("bear_ob_high", "bear_ob_low", "rgba(239,83,80,0.25)", "Bear OB")):
-                    h, l = ctx[hi], ctx[lo]
-                    fig.add_trace(go.Scatter(x=cx, y=h, mode="lines", line=dict(width=0), showlegend=False, hoverinfo="skip"), row=1, col=1)
-                    fig.add_trace(go.Scatter(x=cx, y=l, mode="lines", line=dict(width=0), fill="tonexty",
-                                             fillcolor=color, name=nm, hoverinfo="skip"), row=1, col=1)
-                for col_, color, dash in (("swing_high", "#C0392B", "dot"), ("swing_low", "#16A085", "dot")):
-                    fig.add_trace(go.Scatter(x=cx, y=ctx[col_], mode="lines", line=dict(width=1, color=color, dash=dash),
-                                             name=col_.replace("_", " ")), row=1, col=1)
-                for col_, sym_, color, nm in (("swing_bull_bos", "triangle-up", "#16A085", "BOS ↑"), ("swing_bear_bos", "triangle-down", "#C0392B", "BOS ↓"),
-                                              ("swing_bull_choch", "star", "#16A085", "CHoCH ↑"), ("swing_bear_choch", "star", "#C0392B", "CHoCH ↓")):
-                    msk = ctx[col_].astype(bool)
-                    if msk.any():
-                        yy = ctx["low"][msk] * 0.999 if "bull" in col_ else ctx["high"][msk] * 1.001
-                        fig.add_trace(go.Scatter(x=cx[msk], y=yy, mode="markers", name=nm,
-                                                 marker=dict(symbol=sym_, size=9, color=color)), row=1, col=1)
-        tr = m.closed(trades[trades["symbol"] == sym]) if not trades.empty else trades
-        allsym = trades[trades["symbol"] == sym] if not trades.empty else trades
-        if len(allsym):
-            ent = allsym[allsym["entry_time"].notna() & (allsym["entry_time"] >= bars["timestamp"].iat[0])]
-            if len(ent):
-                fig.add_trace(go.Scatter(x=m.to_local(ent["entry_time"]), y=ent["entry_price"], mode="markers", name="Entry",
-                                         marker=dict(symbol=["triangle-up" if d == "long" else "triangle-down" for d in ent["direction"]],
-                                                     size=13, color="#1565C0", line=dict(width=1, color="white")),
-                                         text=[f"{d} {q:g} @ {p:.2f}" for d, q, p in zip(ent["direction"], ent["qty"], ent["entry_price"])]), row=1, col=1)
-            ex = allsym[allsym["exit_time"].notna() & allsym["exit_price"].notna() & (allsym["exit_time"] >= bars["timestamp"].iat[0])]
-            if len(ex):
-                fig.add_trace(go.Scatter(x=m.to_local(ex["exit_time"]), y=ex["exit_price"], mode="markers", name="Exit",
-                                         marker=dict(symbol="x", size=11, color=["#2E7D32" if (p or 0) > 0 else "#C62828" for p in ex["pnl"]]),
-                                         text=[f"P&L {p:+.2f}" if pd.notna(p) else "" for p in ex["pnl"]]), row=1, col=1)
-        fig.update_layout(height=640, margin=dict(l=10, r=10, t=10, b=10), xaxis_rangeslider_visible=False,
-                          legend=dict(orientation="h", y=1.04))
-        # hide non-trading gaps (overnight/weekends) so candles are contiguous
-        fig.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"]), dict(bounds=[15.25, 8.5], pattern="hour")])
-        st.plotly_chart(fig, width="stretch")
-
-# ----------------------------------------------------------------- trade log
-with tab_log:
-    if trades.empty:
-        st.caption("No trades yet.")
-    else:
-        view = trades.copy()
-        view["entry (CT)"] = m.to_local(view["entry_time"]).dt.strftime("%Y-%m-%d %H:%M") if view["entry_time"].notna().any() else None
-        view["exit (CT)"] = m.to_local(view["exit_time"].fillna(pd.NaT)).dt.strftime("%Y-%m-%d %H:%M") if view["exit_time"].notna().any() else None
-        status = st.multiselect("Status", sorted(view["status"].unique()), default=sorted(view["status"].unique()))
-        view = view[view["status"].isin(status)]
-        cols = ["id", "symbol", "direction", "entry (CT)", "exit (CT)", "entry_price", "exit_price", "qty", "pnl",
-                "model_probability", "sentiment_at_entry", "stop_loss", "take_profit", "mode", "status", "note"]
-        st.dataframe(view.sort_values("id", ascending=False)[cols], width="stretch", hide_index=True,
-                     column_config={"pnl": st.column_config.NumberColumn("P&L ($)", format="%.2f"),
-                                    "model_probability": st.column_config.NumberColumn("P(win)", format="%.2f")})
-        st.download_button("Download CSV", view[cols].to_csv(index=False), "trades.csv", "text/csv")
-
-# -------------------------------------------------------------------- health
-with tab_health:
-    ref_sym = s.tickers[0]
-    latest = max((t for t in (latest_bar_time(engine, x, s.timeframe) for x in s.tickers) if t), default=None)
-    h = m.health(engine, latest, trading_mode=s.trading_mode)
-    icon = "✅" if h["status"] == "ok" else "⚠️"
-    st.subheader(f"{icon} System health")
-    c = st.columns(4)
-    c[0].metric("Mode", h["mode"].upper())
-    c[1].metric("Last scheduler cycle", "never" if h["last_cycle"] is None else f"{h['minutes_since_cycle']:.0f} min ago")
-    c[2].metric("API/cycle errors (24h)", h["errors_24h"])
-    c[3].metric("Newest bar age", "—" if h["data_stale_minutes"] is None else f"{h['data_stale_minutes']:.0f} min")
-    st.caption(
-        ("Market window is OPEN (08:30–15:00 CT)." if h["in_trading_window"]
-         else f"Market window closed. Next session opens {h['next_open']:%a %b %d %H:%M %Z}." if h["next_open"] is not None
-         else "Market window closed.")
-        + ("  ·  🛑 KILL SWITCH ACTIVE — no new orders" if s.kill_switch_active else "")
-    )
-    ev = m.load_events(engine, hours=72)
-    if ev.empty:
-        st.caption("No system events yet.")
-    else:
-        kinds = st.multiselect("Event types", sorted(ev["kind"].unique()), default=[x for x in sorted(ev["kind"].unique()) if x != "cycle"])
-        ev = ev[ev["kind"].isin(kinds)].copy()
-        ev["time (CT)"] = m.to_local(ev["timestamp"]).dt.strftime("%m-%d %H:%M:%S")
-        st.dataframe(ev[["time (CT)", "kind", "message"]].head(300), width="stretch", hide_index=True)
+# ---- Settings
+with tab_set:
+    st.markdown("**Risk limits & mode** (set via `.env`; see `.env.example`)")
+    st.dataframe(pd.DataFrame([
+        ("Trading mode", S.trading_mode), ("Max position size", f"{S.max_position_pct:.1%} of equity"), ("Risk per trade", f"{S.risk_per_trade_pct:.2%} of equity"),
+        ("Daily loss halt", f"{S.max_daily_loss_pct:.1%}"), ("Max open positions", S.max_open_positions), ("Min model probability", S.min_model_probability),
+        ("Use unvalidated model", S.use_unvalidated_model), ("Sentiment block |score| ≥", S.sentiment_block_threshold), ("Shorts allowed", S.allow_shorts),
+        ("Min reward:risk", S.min_rr), ("Flatten before close", f"{S.flatten_minutes_before_close} min" if S.flatten_at_close else "off"),
+        ("No new entries before close", f"{S.no_new_entries_minutes_before_close} min"), ("Extended-hours bars", S.include_extended_hours),
+        ("Timeframe", S.timeframe), ("Tickers", ", ".join(S.tickers)),
+    ], columns=["Setting", "Value"]).astype(str), hide_index=True, width="stretch")
+    st.markdown("**Kill switch** — blocks every new order immediately (open positions are not touched).")
+    ks_on = S.kill_switch_active
+    st.html(f'<div class="banner {"bad" if ks_on else "good"}">Kill switch is <b>{"ACTIVE" if ks_on else "off"}</b>.</div>')
+    ok = st.checkbox("I understand this affects the running scheduler", key="ks_ok")
+    if st.button("Deactivate kill switch" if ks_on else "Activate kill switch", disabled=not ok, type="primary" if not ks_on else "secondary"):
+        try:
+            if ks_on:
+                S.kill_switch_file.unlink(missing_ok=True)
+            else:
+                S.kill_switch_file.write_text(f"activated from dashboard {utc_now().isoformat()}Z\n")
+            st.rerun()
+        except OSError as exc:
+            st.error(f"Could not change the kill switch file: {exc}")

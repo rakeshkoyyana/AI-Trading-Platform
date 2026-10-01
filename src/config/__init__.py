@@ -1,1 +1,1 @@
-from src.config.settings import Settings, get_settings  # noqa: F401
+from src.config.settings import PROJECT_ROOT, Settings, get_settings  # noqa: F401

@@ -129,6 +129,29 @@ class ModelPrediction(Base):
     timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class FetchLog(Base):
+    """When each (symbol, source) news fetch last ran — drives API-quota-saving cache TTLs."""
+
+    __tablename__ = "fetch_log"
+    __table_args__ = (UniqueConstraint("symbol", "source", name="uq_fetch_log"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(16))
+    source: Mapped[str] = mapped_column(String(32))
+    fetched_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class SystemEvent(Base):
+    """Heartbeats, errors and session events — feeds the dashboard health panel."""
+
+    __tablename__ = "system_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    kind: Mapped[str] = mapped_column(String(32), index=True)  # cycle | error | session | alert | info
+    message: Mapped[str] = mapped_column(String(2000), default="")
+
+
 _engine = None
 _SessionLocal: sessionmaker | None = None
 

@@ -150,7 +150,8 @@ def sent_chip(score) -> str:
 
 
 def pill(text, kind="", live=False) -> str:
-    return f'<span class="pill {kind}">{"<span class=\'dot live\'></span>" if live else ""}{esc(text)}</span>'
+    dot = '<span class="dot live"></span>' if live else ""
+    return f'<span class="pill {kind}">{dot}{esc(text)}</span>'
 
 
 def topbar(mode_live: bool, market_open: bool, next_open: str | None, kill: bool, equity: float, as_of: str) -> str:

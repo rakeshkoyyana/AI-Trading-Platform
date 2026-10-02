@@ -63,3 +63,46 @@ def test_mode_selector_writes_the_mode_and_approval_buttons_decide(tmp_path, mon
         assert got == {a: "approved", b: "rejected"}
     finally:
         cfg.get_settings.cache_clear()
+
+
+def test_banner_and_chime_fire_once_per_new_request_and_respect_the_toggle(tmp_path, monkeypatch):
+    at, eng, cfg = _app(tmp_path, monkeypatch)
+    try:
+        at.run()
+        assert not at.exception, [e.value for e in at.exception]
+        assert len(at.get("audio")) == 0
+        now = datetime.utcnow()
+        d = Decision(symbol="SPY", trade=True, direction="long", qty=3, entry=500.0, stop_loss=495.0,
+                     signal_time=now, reasons=["x"])
+        pid = control.create_pending(eng, d, None, ttl_minutes=10, now=now)
+        at.run()
+        assert not at.exception, [e.value for e in at.exception]
+        assert len(at.get("audio")) == 1 and pid in at.session_state["alerted_ids"]  # chime on the NEW request
+        at.run()
+        assert len(at.get("audio")) == 0  # not repeated on every refresh
+        # sound off: the banner still appears, the chime does not
+        d2 = Decision(symbol="QQQ", trade=True, direction="short", qty=2, entry=400.0, stop_loss=405.0,
+                      signal_time=now - timedelta(minutes=15), reasons=[])
+        pid2 = control.create_pending(eng, d2, None, ttl_minutes=10, now=now)
+        chime = [x for x in at.sidebar.toggle if "Chime" in x.label][0]
+        chime.set_value(False).run()
+        assert not at.exception, [e.value for e in at.exception]
+        assert pid2 in at.session_state["alerted_ids"] and len(at.get("audio")) == 0
+    finally:
+        cfg.get_settings.cache_clear()
+
+
+def test_chime_is_a_valid_short_wav_and_banner_text():
+    import io
+    import wave
+    from types import SimpleNamespace
+
+    from src.dashboard import alerts_ui
+
+    with wave.open(io.BytesIO(alerts_ui.chime_wav())) as w:
+        assert w.getnchannels() == 1 and 0.3 < w.getnframes() / w.getframerate() < 1.0
+    assert alerts_ui.banner_html([], datetime.utcnow()) == ""
+    p = SimpleNamespace(id=1, symbol="ASTS", direction="long", qty=40, entry=58.1, expires_at=datetime.utcnow() + timedelta(minutes=9))
+    html = alerts_ui.banner_html([p], datetime.utcnow())
+    assert "ASTS" in html and "LONG" in html and "waiting for your approval" in html and "banner alert" in html
+    assert alerts_ui.new_alert_ids([p], {1}) == [] and alerts_ui.new_alert_ids([p], set()) == [1]

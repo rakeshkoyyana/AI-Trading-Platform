@@ -89,6 +89,8 @@ button[data-baseweb="tab"] {{ font-weight:600; }}
 iframe {{ border-radius:12px; }}
 .banner {{ border-radius:12px; padding:10px 14px; border:1px solid {BORDER}; margin-bottom:10px; font-size:13px; }}
 .banner.warn {{ border-color:rgba(245,176,65,.5); background:rgba(245,176,65,.08); }}
+.banner.alert {{ border-color:rgba(245,176,65,.9); background:rgba(245,176,65,.16); font-size:15px; padding:12px 16px; animation:aw-pulse 1.6s ease-in-out infinite; }}
+@keyframes aw-pulse {{ 0%,100% {{ box-shadow:0 0 0 0 rgba(245,176,65,.45); }} 50% {{ box-shadow:0 0 0 8px rgba(245,176,65,0); }} }}
 .banner.bad {{ border-color:rgba(239,83,80,.5); background:rgba(239,83,80,.08); }}
 .banner.good {{ border-color:rgba(38,166,154,.5); background:rgba(38,166,154,.08); }}
 </style>

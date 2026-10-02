@@ -25,6 +25,7 @@ import streamlit.components.v1 as components
 
 from src.config import get_settings
 from src import universe as U
+from src.dashboard import alerts_ui
 from src.dashboard import brand
 from src.dashboard import data as D
 from src.dashboard import metrics as m
@@ -152,6 +153,8 @@ with st.sidebar:
     refresh = st.selectbox("Auto-refresh", ["Off", "15s", "30s", "60s"], index=2)
     ext = st.toggle("Include extended-hours bars", value=S.include_extended_hours,
                     help="Match this to your TradingView chart's Extended hours setting.")
+    alert_sound = st.toggle("Chime on new approval requests", value=True,
+                            help="Plays a short chime when a trade needs your approval. Browsers only allow sound after you have clicked on the page once.")
     mode_filter = st.radio("Trades shown", ["All", "paper", "live"], horizontal=True)
     if st.button("Clear caches"):
         st.cache_data.clear()
@@ -195,26 +198,6 @@ def header_and_tape():
 
 header_and_tape()
 
-# ------------------------------------------------------------------ KPI cards
-eq = m.equity_curve(trades, start_equity)
-eq_spark = eq["equity"].tail(40).tolist() if not eq.empty else None
-pnl_spark = m.closed(trades)["pnl"].cumsum().tail(40).tolist() if not trades.empty and k["trades"] else None
-dd = abs(k["max_drawdown"]) * 100 if k["max_drawdown"] else 0.0
-open_n = int(trades["status"].isin(["open", "filled"]).sum()) if not trades.empty else 0
-cards = [
-    T.kpi("Net P&L today", T.money(k["pnl_today"], True), f"week {T.money(k['pnl_week'], True)}", pnl_spark, T.UP if k["pnl_today"] >= 0 else T.DOWN, T.tone(k["pnl_today"])),
-    T.kpi("Month / all-time", T.money(k["pnl_month"], True), f"all-time {T.money(k['pnl_all'], True)}", eq_spark, T.ACCENT, T.tone(k["pnl_month"])),
-    T.kpi("Win rate", T.pct(k["win_rate"] * 100 if k["win_rate"] is not None else None), f"{k['wins']}W · {k['losses']}L · {k['trades']} trades"),
-    T.kpi("Avg win / avg loss", f"{k['win_loss_ratio']:.2f}" if k["win_loss_ratio"] else "—", f"profit factor {k['profit_factor']:.2f}" if k["profit_factor"] else "profit factor —"),
-    T.kpi("Sharpe (daily)", f"{k['sharpe']:.2f}" if k["sharpe"] is not None else "—", f"max drawdown {dd:.1f}%"),
-    T.kpi("Open exposure", T.money(k["open_exposure"]), f"{open_n} open position(s)"),
-    T.kpi("Model confidence", T.pct(prob * 100) if prob is not None else "no model", f"{model_ver}" if model_ver else "train: python -m src.ml.train"),
-]
-st.html('<div class="kpis">' + "".join(cards) + "</div>")
-if 0 < k["trades"] < 30:
-    st.html(f'<div class="banner warn">Only <b>{k["trades"]}</b> closed trades so far — treat win rate, Sharpe and ratios as noise until n ≳ 30–50.</div>')
-
-
 # ------------------------------------------------------------------ trade control
 _MODE_HELP = ("**Off** – never open a position (an existing one is still closed by the Pine exit rules). "
               "**Ask** – a qualifying signal waits here for your Approve / Reject. "
@@ -227,7 +210,7 @@ def _mode_changed(sym_: str) -> None:
         control.set_mode(engine, sym_, v.lower())
 
 
-@st.fragment(run_every=("10s" if RUN_EVERY else None))
+@st.fragment(run_every="10s")  # approvals are time-limited, so this always polls
 def trade_control():
     viewed = [x for x in (st.session_state.get("viewing"), st.session_state.get("sym")) if x]
     syms = list(dict.fromkeys([*tickers, *watch, *viewed]))
@@ -235,6 +218,14 @@ def trade_control():
     syms = list(dict.fromkeys([*syms, *modes]))
     pend = control.list_pending(engine, "pending")
     n_active = sum(1 for v in modes.values() if v != "off")
+    seen = st.session_state.setdefault("alerted_ids", set())
+    fresh = alerts_ui.new_alert_ids(pend, seen)
+    if pend:
+        st.html(alerts_ui.banner_html(pend, utc_now()))
+    if fresh:
+        seen.update(fresh)
+        if alert_sound:
+            st.audio(alerts_ui.chime_wav(), format="audio/wav", autoplay=True)  # only on a NEW request
     with st.container(border=True):
         h1, h2 = st.columns([3, 2])
         h1.markdown(f"**Trade control** · {n_active} of {len(syms)} tickers active today")
@@ -281,6 +272,26 @@ def trade_control():
 
 
 trade_control()
+
+# ------------------------------------------------------------------ KPI cards
+eq = m.equity_curve(trades, start_equity)
+eq_spark = eq["equity"].tail(40).tolist() if not eq.empty else None
+pnl_spark = m.closed(trades)["pnl"].cumsum().tail(40).tolist() if not trades.empty and k["trades"] else None
+dd = abs(k["max_drawdown"]) * 100 if k["max_drawdown"] else 0.0
+open_n = int(trades["status"].isin(["open", "filled"]).sum()) if not trades.empty else 0
+cards = [
+    T.kpi("Net P&L today", T.money(k["pnl_today"], True), f"week {T.money(k['pnl_week'], True)}", pnl_spark, T.UP if k["pnl_today"] >= 0 else T.DOWN, T.tone(k["pnl_today"])),
+    T.kpi("Month / all-time", T.money(k["pnl_month"], True), f"all-time {T.money(k['pnl_all'], True)}", eq_spark, T.ACCENT, T.tone(k["pnl_month"])),
+    T.kpi("Win rate", T.pct(k["win_rate"] * 100 if k["win_rate"] is not None else None), f"{k['wins']}W · {k['losses']}L · {k['trades']} trades"),
+    T.kpi("Avg win / avg loss", f"{k['win_loss_ratio']:.2f}" if k["win_loss_ratio"] else "—", f"profit factor {k['profit_factor']:.2f}" if k["profit_factor"] else "profit factor —"),
+    T.kpi("Sharpe (daily)", f"{k['sharpe']:.2f}" if k["sharpe"] is not None else "—", f"max drawdown {dd:.1f}%"),
+    T.kpi("Open exposure", T.money(k["open_exposure"]), f"{open_n} open position(s)"),
+    T.kpi("Model confidence", T.pct(prob * 100) if prob is not None else "no model", f"{model_ver}" if model_ver else "train: python -m src.ml.train"),
+]
+st.html('<div class="kpis">' + "".join(cards) + "</div>")
+if 0 < k["trades"] < 30:
+    st.html(f'<div class="banner warn">Only <b>{k["trades"]}</b> closed trades so far — treat win rate, Sharpe and ratios as noise until n ≳ 30–50.</div>')
+
 
 # ------------------------------------------------------------------ main: chart + right rail
 left, right = st.columns([3.35, 1.15], gap="small")

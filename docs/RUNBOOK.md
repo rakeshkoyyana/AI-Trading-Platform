@@ -48,7 +48,7 @@ The **Trade control** panel (under the KPI cards) sets a mode per ticker. `.env`
 qualifying signal waits for your Approve / Reject for `APPROVAL_TTL_MINUTES` (default 10) and a Discord message tells you. **Auto**:
 sent to Alpaca immediately. The scheduler's approvals job (every 10 s) re-checks the trading window, position limits, daily-loss
 limit and that price has not already crossed the stop before it sends an approved order. Run `python -m src.scheduler.run_loop`
-for approvals to execute.
+for approvals to execute. A pulsing banner at the top of the dashboard and a short chime announce each new request (toggle the chime in the sidebar; browsers only play sound after you have clicked on the page once). Discord gets the same message as a phone push for when the dashboard is closed.
 
 ### Shadow council (free, advisory)
 Every fresh signal also gets rule-based analyst votes (momentum room before the RSI exit, volume, structure, premium/discount,

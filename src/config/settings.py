@@ -67,7 +67,9 @@ class Settings:
     allow_shorts: bool = True
     # "pine": a trade ends exactly like the Pine strategy (RSI >= 70 / <= 30 or EMA trend flip, reversing on the opposite
     # signal) with an SMC protective stop attached at the broker. "bracket": SMC stop AND target attached at entry.
-    exit_mode: str = "pine"
+    # "hybrid": the Pine exits above PLUS a fixed take-profit at TARGET_RR x the stop distance (placed at the broker with the stop).
+    exit_mode: str = "hybrid"
+    target_rr: float = 2.0  # hybrid: take-profit distance as a multiple of the stop distance (1:2 by default)
     # What happens to a new signal on a ticker nobody has set a mode for (TICKERS only; starred symbols default to off):
     # "off" ignore, "ask" propose it on the dashboard and wait for Approve, "auto" trade it.
     default_trade_mode: str = "ask"
@@ -132,7 +134,8 @@ def get_settings() -> Settings:
         alpaca_data_feed=(env("ALPACA_DATA_FEED", "sip") or "sip").lower(),
         sip_delay_minutes=int(env("SIP_DELAY_MINUTES", "16")),
         live_hybrid=env("LIVE_HYBRID", "true").lower() in {"1", "true", "yes", "on"},
-        exit_mode=(env("EXIT_MODE", "pine") or "pine").lower(),
+        exit_mode=(env("EXIT_MODE", "hybrid") or "hybrid").lower(),
+        target_rr=float(env("TARGET_RR", "2.0")),
         default_trade_mode=(env("DEFAULT_TRADE_MODE", "ask") or "ask").lower(),
         approval_ttl_minutes=int(env("APPROVAL_TTL_MINUTES", "10")),
         include_extended_hours=env("INCLUDE_EXTENDED_HOURS", "true").lower() in {"1", "true", "yes", "on"},

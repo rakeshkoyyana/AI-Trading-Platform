@@ -226,7 +226,7 @@ def test_end_session_summarises(world):
 
 def test_build_scheduler_registers_all_jobs(world):
     sched = build_scheduler(world["make"]())
-    assert {j.id for j in sched.get_jobs()} == {"session_start", "cycle", "flatten", "session_end", "sentiment", "approvals"}
+    assert {j.id for j in sched.get_jobs()} == {"session_start", "cycle", "flatten", "session_end", "sentiment", "approvals", "closes"}
 
 
 def test_model_that_does_not_improve_never_gates_trades():

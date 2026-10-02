@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 
 from src.config import Settings, get_settings
-from src.db.schema import PendingOrder, TickerMode, session_scope
+from src.db.schema import CloseRequest, PendingOrder, TickerMode, Trade, session_scope
 from src.decision_engine.engine import Decision
 
 MODES = ("off", "ask", "auto")
@@ -133,3 +133,56 @@ def decision_from_pending(p: PendingOrder) -> Decision:
         take_profit=p.take_profit, probability=p.probability, sentiment_score=p.sentiment,
         signal_time=p.signal_time, reasons=json.loads(p.reasons_json or "[]"),
     )
+
+
+# ------------------------------------------------------------ manual close
+CLOSE_TTL_SECONDS = 120  # a click the scheduler never picked up must not fire later by surprise
+
+
+def request_close(engine, symbol: str, now: datetime | None = None) -> int | None:
+    """Queue a close for `symbol`. Returns None if one is already waiting."""
+    symbol = symbol.upper()
+    with session_scope(engine) as sx:
+        if sx.execute(select(CloseRequest).where(CloseRequest.symbol == symbol,
+                                                 CloseRequest.status == "pending")).scalars().first():
+            return None
+        row = CloseRequest(created_at=now or _utcnow(), symbol=symbol, status="pending")
+        sx.add(row)
+        sx.flush()
+        return row.id
+
+
+def list_close_requests(engine, status: str | None = "pending") -> list[CloseRequest]:
+    with session_scope(engine) as sx:
+        q = select(CloseRequest).order_by(CloseRequest.created_at.desc())
+        if status:
+            q = q.where(CloseRequest.status == status)
+        rows = list(sx.execute(q).scalars())
+        sx.expunge_all()
+    return rows
+
+
+def mark_close(engine, req_id: int, status: str, note: str = "") -> None:
+    with session_scope(engine) as sx:
+        row = sx.get(CloseRequest, req_id)
+        if row is not None:
+            row.status, row.note = status, (note or None)
+
+
+def expire_close_requests(engine, now: datetime | None = None) -> int:
+    cutoff = (now or _utcnow()) - timedelta(seconds=CLOSE_TTL_SECONDS)
+    n = 0
+    with session_scope(engine) as sx:
+        for row in sx.execute(select(CloseRequest).where(CloseRequest.status == "pending",
+                                                         CloseRequest.created_at <= cutoff)).scalars():
+            row.status, row.note = "expired", "scheduler did not pick it up in time (is it running?)"
+            n += 1
+    return n
+
+
+def open_positions(engine) -> list[dict]:
+    """Trades the platform believes are open (for the dashboard's Close buttons)."""
+    with session_scope(engine) as sx:
+        rows = sx.execute(select(Trade).where(Trade.status.in_(["open", "filled"])).order_by(Trade.id)).scalars()
+        return [dict(symbol=t.symbol, direction=t.direction, qty=t.qty, entry=t.entry_price,
+                     stop=t.stop_loss, target=t.take_profit) for t in rows]

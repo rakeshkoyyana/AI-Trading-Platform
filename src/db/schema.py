@@ -155,6 +155,19 @@ class PendingOrder(Base):
     trade_id: Mapped[int | None] = mapped_column(ForeignKey("trades.id"), nullable=True)
 
 
+class CloseRequest(Base):
+    """A 'Close position' click on the dashboard; the scheduler (which owns the broker) carries it out."""
+
+    __tablename__ = "close_requests"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    # pending | done | failed | expired
+    status: Mapped[str] = mapped_column(String(10), default="pending", index=True)
+    note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+
 class CouncilVote(Base):
     """Shadow analyst-council votes for a fresh signal. Logged beside the real decision; never changes it."""
 

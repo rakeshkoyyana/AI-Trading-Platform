@@ -17,7 +17,7 @@ from src.config import Settings, get_settings
 from src.data_ingestion.common import TIMEFRAME_MINUTES
 from src.ml.features import row_features
 from src.ml.predict import predict_probability
-from src.smc_logic.levels import stop_target_levels
+from src.smc_logic.levels import Levels, stop_target_levels
 from src.smc_logic.pipeline import FEATURE_COLS
 
 
@@ -171,6 +171,11 @@ def should_trade(
     lv = stop_target_levels(row, direction, entry=entry, min_rr=s.min_rr)
     d.entry, d.stop_loss, d.take_profit = entry, round(lv.stop, 2), round(lv.target, 2)
     pine_exits = s.exit_mode == "pine"
+    if s.exit_mode == "hybrid":  # fixed R-multiple target; the Pine exits still close the trade earlier if they fire
+        r0 = abs(entry - lv.stop)
+        tp = entry + s.target_rr * r0 if direction == "long" else entry - s.target_rr * r0
+        d.take_profit = round(tp, 2)
+        lv = Levels(lv.entry, lv.stop, tp, lv.stop_source, f"{s.target_rr:g}R")
     if pine_exits:
         d.take_profit = None  # the Pine rules close the trade; only the protective stop is placed
     d.stop_source, d.target_source, d.reward_risk = lv.stop_source, lv.target_source, lv.reward_risk
@@ -182,7 +187,10 @@ def should_trade(
         return d.block("stop_too_wide", f"stop {risk / entry:.2%} of price > {s.max_stop_pct:.2%}")
     if risk < s.min_stop_atr * atr:
         return d.block("stop_too_tight", f"stop {risk:.2f} < {s.min_stop_atr} ATR ({atr:.2f}); noise would hit it")
-    if pine_exits:
+    if s.exit_mode == "hybrid":
+        d.reasons.append(f"stop {d.stop_loss} ({lv.stop_source}), take-profit {d.take_profit} ({s.target_rr:g}R); "
+                         "also exits on RSI 70/30 or trend flip, whichever comes first")
+    elif pine_exits:
         d.reasons.append(f"protective stop {d.stop_loss} ({lv.stop_source}); exit by Pine rules (RSI 70/30 or trend flip)")
     else:
         d.reasons.append(

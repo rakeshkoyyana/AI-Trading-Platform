@@ -254,7 +254,7 @@ class TradingCycle:
     def _manage_exit(self, sym: str, ctx: pd.DataFrame, now: datetime, state: AccountState) -> str | None:
         """Pine exits: close a held position on RSI >= 70 / <= 30 or a trend flip. Runs for every mode."""
         qty = state.open_positions.get(sym) or 0
-        if not qty or self.s.exit_mode != "pine":
+        if not qty or self.s.exit_mode not in ("pine", "hybrid"):
             return None
         row = ctx.iloc[-1]
         reason = pine_exit_reason(row, "long" if qty > 0 else "short", self._smc)
@@ -346,6 +346,42 @@ class TradingCycle:
         except Exception as exc:  # noqa: BLE001
             alerts.log_event("council", f"{sym}: shadow council failed: {exc}", self.engine)
 
+    # ------------------------------------------------------- manual closes
+    def process_closes(self, now: datetime | None = None, force: bool = False) -> list[dict]:
+        """Execute 'Close position' clicks from the dashboard (market close + cancel the protective orders)."""
+        now = now or utc_now()
+        results: list[dict] = []
+        control.expire_close_requests(self.engine, now)
+        reqs = control.list_close_requests(self.engine, "pending")
+        if not reqs:
+            return results
+        positions = {p.symbol: p.qty for p in self.broker.get_positions()}
+        for r in reqs:
+            qty = positions.get(r.symbol) or 0
+            if not qty:
+                control.mark_close(self.engine, r.id, "failed", "no open position at the broker")
+                results.append(dict(id=r.id, symbol=r.symbol, closed=False))
+                continue
+            if not force and not is_trading_window_now(now, self.s):
+                control.mark_close(self.engine, r.id, "failed", "market closed - a close order would only queue until the open")
+                self.notify(f"{r.symbol}: manual close NOT sent - market closed", "warning")
+                results.append(dict(id=r.id, symbol=r.symbol, closed=False))
+                continue
+            tid = self._open_trade_id(r.symbol)
+            res = self.broker.close_position(r.symbol)
+            if res is None:
+                control.mark_close(self.engine, r.id, "failed", "the broker did not accept the close order")
+                self.notify(f"{r.symbol}: manual close FAILED - check the broker", "error")
+                results.append(dict(id=r.id, symbol=r.symbol, closed=False))
+                continue
+            px = res.filled_avg_price or (self.price_fn(r.symbol) if self.price_fn else None)
+            if tid and px:
+                close_trade(self.engine, tid, px, "Manual close from dashboard")
+            control.mark_close(self.engine, r.id, "done", f"closed ~{px:.2f}" if px else "close order sent")
+            self.notify(f"CLOSE {r.symbol} ({'long' if qty > 0 else 'short'}) ~{px or 0:.2f} | manual close from the dashboard", "trade")
+            results.append(dict(id=r.id, symbol=r.symbol, closed=True))
+        return results
+
     # -------------------------------------------------------------- approvals
     def process_approvals(self, now: datetime | None = None, force: bool = False) -> list[dict]:
         """Execute entries the user approved on the dashboard (re-validated at the moment of sending)."""
@@ -421,6 +457,8 @@ def build_scheduler(cycle: TradingCycle):
                               second=s.bar_delay_seconds, timezone=tz),
                   id="cycle", max_instances=1, coalesce=True, misfire_grace_time=120)
     sched.add_job(cycle.process_approvals, IntervalTrigger(seconds=10, timezone=tz), id="approvals",
+                  max_instances=1, coalesce=True)
+    sched.add_job(cycle.process_closes, IntervalTrigger(seconds=5, timezone=tz), id="closes",
                   max_instances=1, coalesce=True)
     sched.add_job(cycle.maybe_flatten, CronTrigger(day_of_week=dow, hour=f"{sh}-{eh}", minute="*", timezone=tz),
                   id="flatten", max_instances=1, coalesce=True)

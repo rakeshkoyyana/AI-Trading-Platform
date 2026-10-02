@@ -1,0 +1,46 @@
+//---------------------------------------------------------------------------------------------------------------------
+// TRADINGVIEW EXPORT PATCH — paste this block at the VERY END of your combined Pine script.
+// It plots every SMC event / triple-confirmation condition as a 0/1 series (and key levels as numbers)
+// so "Export chart data" includes them. Plot titles must stay exactly as written: the Python
+// validator matches columns by title.
+//
+// Also turn ON "Fair Value Gaps" in the SMC settings if you want FVG compared, and set
+// "Swing Order Blocks" ON if you plan to use swing OBs (the validator flags are configurable).
+//---------------------------------------------------------------------------------------------------------------------
+_dw = display.data_window
+
+// Structure events (0/1)
+plot(currentAlerts.internalBullishBOS   ? 1 : 0, "int_bull_bos",     display = _dw)
+plot(currentAlerts.internalBullishCHoCH ? 1 : 0, "int_bull_choch",   display = _dw)
+plot(currentAlerts.internalBearishBOS   ? 1 : 0, "int_bear_bos",     display = _dw)
+plot(currentAlerts.internalBearishCHoCH ? 1 : 0, "int_bear_choch",   display = _dw)
+plot(currentAlerts.swingBullishBOS      ? 1 : 0, "swing_bull_bos",   display = _dw)
+plot(currentAlerts.swingBullishCHoCH    ? 1 : 0, "swing_bull_choch", display = _dw)
+plot(currentAlerts.swingBearishBOS      ? 1 : 0, "swing_bear_bos",   display = _dw)
+plot(currentAlerts.swingBearishCHoCH    ? 1 : 0, "swing_bear_choch", display = _dw)
+
+// Order-block mitigation (price broke through an OB)
+plot(currentAlerts.internalBullishOrderBlock ? 1 : 0, "ob_mit_int_bull",   display = _dw)
+plot(currentAlerts.internalBearishOrderBlock ? 1 : 0, "ob_mit_int_bear",   display = _dw)
+plot(currentAlerts.swingBullishOrderBlock    ? 1 : 0, "ob_mit_swing_bull", display = _dw)
+plot(currentAlerts.swingBearishOrderBlock    ? 1 : 0, "ob_mit_swing_bear", display = _dw)
+
+// Equal highs / lows and fair value gaps
+plot(currentAlerts.equalHighs          ? 1 : 0, "eqh",          display = _dw)
+plot(currentAlerts.equalLows           ? 1 : 0, "eql",          display = _dw)
+plot(currentAlerts.bullishFairValueGap ? 1 : 0, "fvg_bull_new", display = _dw)
+plot(currentAlerts.bearishFairValueGap ? 1 : 0, "fvg_bear_new", display = _dw)
+
+// Triple-confirmation conditions and indicators
+plot(longCondition  ? 1 : 0, "long_cond",  display = _dw)
+plot(shortCondition ? 1 : 0, "short_cond", display = _dw)
+plot(fastEMA,   "ema_fast", display = _dw)
+plot(slowEMA,   "ema_slow", display = _dw)
+plot(rsiValue,  "rsi",      display = _dw)
+plot(atrMeasure, "atr200",  display = _dw)
+
+// Pivot levels / trailing extremes
+plot(swingHigh.currentLevel, "swing_high_lvl", display = _dw)
+plot(swingLow.currentLevel,  "swing_low_lvl",  display = _dw)
+plot(trailing.top,           "trail_top",      display = _dw)
+plot(trailing.bottom,        "trail_bottom",   display = _dw)

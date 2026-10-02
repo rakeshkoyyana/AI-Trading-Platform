@@ -7,7 +7,8 @@ AlphaWave dashboard (Streamlit).
 Layout: top bar + scrolling price/news tape, KPI cards, a TradingView-style interactive chart with
 SMC overlays and drawing tools, a right rail (watchlist, live news, decision feed) and tabs for the
 scanner, trades, performance, decision log, ML model card, system health and settings.
-The dashboard is read-only with respect to the broker; the only thing it can write is the KILL_SWITCH file.
+The dashboard never talks to the broker. It writes only the KILL_SWITCH file, each ticker's trade mode (Off / Ask / Auto)
+and your Approve / Reject decisions; the scheduler process is what actually places orders.
 """
 from __future__ import annotations
 
@@ -31,6 +32,7 @@ from src.dashboard import theme as T
 from src.dashboard.chart_component import chart_html
 from src.data_ingestion.backfill import latest_bar_time, load_bars
 from src.data_ingestion.on_demand import ensure_symbol_data
+from src.execution import control
 from src.db.schema import get_engine, init_db
 
 st.set_page_config(page_title=brand.NAME, page_icon=brand.page_icon(), layout="wide", initial_sidebar_state="collapsed")
@@ -107,11 +109,19 @@ def _last_ts(sym: str, tf: str | None = None) -> str:
     return str(t) if t else "none"
 
 
-@st.cache_data(ttl=120)
+@st.cache_data(ttl=45)
 def _chart_core(db: str, sym: str, ext: bool, last15: str, last5: str) -> dict:
     """Chart datasets with SMC overlays computed per timeframe (trade overlays are attached fresh, uncached)."""
     b15 = load_bars(engine, sym, "15Min", since=utc_now() - timedelta(days=400), extended_hours=ext)
     b5 = load_bars(engine, sym, "5Min", since=utc_now() - timedelta(days=45), extended_hours=ext)
+    if S.live_hybrid:  # newest minutes from the real-time IEX feed (estimate, never stored); exact SIP replaces it later
+        from src.data_ingestion.live_tail import with_live_tail
+
+        now = datetime.now(timezone.utc)
+        if len(b15):
+            b15, _ = with_live_tail(b15, sym, "15Min", now=now, regular_only=not ext)
+        if len(b5):
+            b5, _ = with_live_tail(b5, sym, "5Min", now=now, regular_only=not ext)
     return D.build_chart_payload(b15, None, pd.DataFrame(columns=["symbol"]), sym, bars_5m=b5)
 
 
@@ -203,6 +213,70 @@ st.html('<div class="kpis">' + "".join(cards) + "</div>")
 if 0 < k["trades"] < 30:
     st.html(f'<div class="banner warn">Only <b>{k["trades"]}</b> closed trades so far — treat win rate, Sharpe and ratios as noise until n ≳ 30–50.</div>')
 
+
+# ------------------------------------------------------------------ trade control
+_MODE_HELP = ("**Off** – never open a position (an existing one is still closed by the Pine exit rules). "
+              "**Ask** – a qualifying signal waits here for your Approve / Reject. "
+              "**Auto** – a qualifying signal is sent to Alpaca immediately (every risk gate still applies).")
+
+
+def _mode_changed(sym_: str) -> None:
+    v = st.session_state.get(f"mode_{sym_}")
+    if v:
+        control.set_mode(engine, sym_, v.lower())
+
+
+@st.fragment(run_every=("10s" if RUN_EVERY else None))
+def trade_control():
+    viewed = [x for x in (st.session_state.get("viewing"), st.session_state.get("sym")) if x]
+    syms = list(dict.fromkeys([*tickers, *watch, *viewed]))
+    modes = control.get_modes(engine, syms, S)
+    syms = list(dict.fromkeys([*syms, *modes]))
+    pend = control.list_pending(engine, "pending")
+    n_active = sum(1 for v in modes.values() if v != "off")
+    with st.container(border=True):
+        h1, h2 = st.columns([3, 2])
+        h1.markdown(f"**Trade control** · {n_active} of {len(syms)} tickers active today")
+        h2.caption("Only tickers set to Ask or Auto are scanned for entries.", help=_MODE_HELP)
+        per_row = 4
+        for i in range(0, len(syms), per_row):
+            cols = st.columns(per_row)
+            for col, s_ in zip(cols, syms[i:i + per_row]):
+                with col:
+                    st.caption(f"**{s_}**" + ("" if s_ in tickers else "  ·  ☆ research"))
+                    st.segmented_control(f"Mode {s_}", ["Off", "Ask", "Auto"], default=modes[s_].title(), key=f"mode_{s_}",
+                                         on_change=_mode_changed, args=(s_,), label_visibility="collapsed")
+        if pend:
+            st.markdown(f"**Waiting for your approval ({len(pend)})**")
+        for p in pend:
+            left_s = max(int((p.expires_at - utc_now()).total_seconds()), 0)
+            prob_s = f" · P(win) {p.probability:.0%}" if p.probability is not None else ""
+            stop_s = f"stop {p.stop_loss:.2f}" if p.stop_loss else "no stop"
+            c1, c2, c3 = st.columns([4, 1, 1])
+            c1.markdown(f"{'🟢' if p.direction == 'long' else '🔴'} **{p.direction.upper()} {p.symbol}** × {p.qty} @ ~{p.entry:.2f} · "
+                        f"{stop_s}{prob_s} · expires in {left_s // 60}:{left_s % 60:02d}")
+            if c2.button("Approve", key=f"ap_{p.id}", type="primary"):
+                ok = control.decide(engine, p.id, True)
+                st.toast("Approved – the scheduler will send it within ~10 s" if ok else "Too late – that request expired")
+                st.rerun()
+            if c3.button("Reject", key=f"rj_{p.id}"):
+                control.decide(engine, p.id, False)
+                st.rerun()
+            with c1.expander("Why this signal"):
+                import json as _json
+
+                for line in _json.loads(p.reasons_json or "[]"):
+                    st.caption(line)
+        recent = [r for r in control.list_pending(engine, None) if r.status in {"executed", "failed", "rejected"}][:4]
+        if recent:
+            st.caption("Recent: " + "  ·  ".join(
+                f"{r.symbol} {r.direction} – {r.status}" + (f" ({r.note})" if r.status == "failed" and r.note else "") for r in recent))
+        st.caption("Approved orders are sent by the scheduler (`python -m src.scheduler.run_loop`) within about 10 seconds; "
+                   "positions are always closed by the Pine exit rules and flattened before the close.")
+
+
+trade_control()
+
 # ------------------------------------------------------------------ main: chart + right rail
 left, right = st.columns([3.35, 1.15], gap="small")
 
@@ -236,7 +310,7 @@ with left:
             _, err = U.add_to_watchlist(sym)
             st.toast(err or f"{sym} added to your watchlist")
             st.rerun()
-        c2.caption(f"{names.get(sym) or sym} · research only: the scheduler trades just your trade list ({', '.join(tickers)}).")
+        c2.caption(f"{names.get(sym) or sym} · research only until you set its mode to Ask or Auto in Trade control.")
 
     @st.fragment(run_every=("60s" if RUN_EVERY else None))
     def chart_panel():

@@ -72,6 +72,11 @@ class AlpacaBroker(Broker):
                 stop_loss=StopLossRequest(stop_price=round(float(stop_loss), 2)),
                 take_profit=TakeProfitRequest(limit_price=round(float(take_profit), 2)),
             )
+        elif stop_loss is not None:  # stop-only: Pine rules do the exit, the stop is the safety net
+            kwargs.update(
+                order_class=OrderClass.OTO,
+                stop_loss=StopLossRequest(stop_price=round(float(stop_loss), 2)),
+            )
         try:
             return _result(self.client.submit_order(MarketOrderRequest(**kwargs)))
         except Exception as exc:  # noqa: BLE001 - broker rejections must be logged, not raised
@@ -113,10 +118,26 @@ class AlpacaBroker(Broker):
         )
 
     def close_position(self, symbol: str) -> OrderResult | None:
+        """Cancel the symbol's resting stop first (it holds the shares), then close at market."""
+        import time
+
         try:
-            return _result(self.client.close_position(symbol))
+            from alpaca.trading.enums import QueryOrderStatus
+            from alpaca.trading.requests import GetOrdersRequest
+
+            for o in self.client.get_orders(GetOrdersRequest(status=QueryOrderStatus.OPEN, symbols=[symbol])):
+                try:
+                    self.client.cancel_order_by_id(o.id)
+                except Exception:  # noqa: BLE001
+                    pass
         except Exception:  # noqa: BLE001
-            return None
+            pass
+        for attempt in range(3):
+            try:
+                return _result(self.client.close_position(symbol))
+            except Exception:  # noqa: BLE001 - cancel may still be settling
+                time.sleep(0.5 * (attempt + 1))
+        return None
 
     def close_all_positions(self) -> list[OrderResult]:
         try:

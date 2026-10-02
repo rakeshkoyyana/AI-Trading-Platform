@@ -170,8 +170,10 @@ def test_strategy_fills_follow_the_pine_entry_and_exit_rules():
     df = _fills_frame()
     fills = D.strategy_fills(df)
     trades = simulate_strategy(df)
-    assert fills and all(f["kind"] == "fills" and f["color"] == D.PURPLE for f in fills)
-    entries = [f for f in fills if f["text"].startswith(("Buy", "Sell"))]
+    assert fills and all(f["kind"] == "fills" for f in fills)
+    entries = [f for f in fills if f["text"].startswith(("Long", "Short"))]
+    assert all(f["color"] == (D.LONG_BLUE if f["text"].startswith("Long") else D.SHORT_RED) for f in entries)
+    assert all(f["color"] == D.PURPLE for f in fills if f["text"].startswith("Close"))  # closes are purple, like TradingView
     assert len(entries) == len(trades)
     # every entry marker sits on the strategy's fill bar (next bar's open)
     want = sorted(int(pd.Timestamp(t).tz_localize("UTC").timestamp()) for t in trades["entry_time"])
@@ -208,3 +210,68 @@ def test_brand_assets_exist_and_header_uses_the_logo():
     assert img.startswith("<img") and "data:image/svg+xml;base64," in img
     assert 'src="data:image/svg+xml;base64,' in T.topbar(False, True, None, False, 100000.0, "now")
     assert "SMC" not in T.topbar(False, True, None, False, 100000.0, "now")
+
+
+def test_order_labels_carry_tradingview_style_quantities():
+    """Long +N / Short -N / Close ... / reversal shows the closed + opened shares (e.g. +34), sized 10% of $10k equity."""
+    import re
+
+    df = _fills_frame()
+    fills = D.strategy_fills(df)
+    first = fills[0]
+    q = int(re.search(r"[+-](\d+)", first["text"]).group(1))
+    open_px = float(df["open"].iloc[[i for i, t in enumerate(df["timestamp"]) if int(pd.Timestamp(t).tz_localize("UTC").timestamp()) == first["time"]][0]])
+    assert q == int(10_000 * 0.10 // open_px)  # floor(equity x 10% / fill price)
+    for f in fills:
+        if f["text"].startswith("Long"):
+            assert re.match(r"Long \+\d+", f["text"])
+        elif f["text"].startswith("Short"):
+            assert re.match(r"Short -\d+", f["text"])
+        else:  # closing a long sells (-), closing a short buys (+)
+            assert re.match(r"Close Long -\d+|Close Short \+\d+", f["text"])
+    rev = [f for f in fills if "reverse" in f["text"]]
+    for r in rev:  # reversal quantity is the closed position plus the new one
+        i = fills.index(r)
+        prev_entry = [f for f in fills[:i] if f["text"].startswith(("Long", "Short"))][-1]
+        n_prev = int(re.search(r"(\d+)", prev_entry["text"]).group(1))
+        n_now = int(re.search(r"(\d+)", r["text"]).group(1))
+        assert n_now > n_prev
+
+
+def test_prior_day_and_week_levels(world):
+    bars, _ = world
+    p = D.build_chart_payload(bars, None, pd.DataFrame(columns=["symbol"]), "AAA")
+    lv = [s for s in p["datasets"]["15m"]["segs"] if s["kind"] == "levels"]
+    assert {s["label"] for s in lv} == {"PDH", "PDL", "PWH", "PWL"}
+    last_pdh = [s for s in lv if s["label"] == "PDH"][-1]
+    assert last_pdh["live"] and last_pdh["lab"]  # newest day extends to the right edge and carries the label
+    # PDH really is the previous trading day's regular-session high: pick the segment of the last day
+    from src.data_ingestion.common import regular_hours_mask
+
+    m = regular_hours_mask(bars["timestamp"], "15Min").to_numpy()
+    et = pd.to_datetime(bars["timestamp"]).dt.tz_localize("UTC").dt.tz_convert("America/New_York").dt.date.to_numpy()
+    r = bars[m].assign(d=et[m])
+    days = sorted(r["d"].unique())
+    shown_last_day = et[-1]
+    prev_day = max(d for d in days if d < shown_last_day)
+    assert abs(last_pdh["p"] - float(r[r["d"] == prev_day]["high"].max())) < 1e-3
+    assert not [s for s in p["datasets"]["1D"]["segs"] if s["kind"] == "levels"]
+
+
+def test_estimated_bars_are_flagged_and_faded_and_survive_resampling(world):
+    bars, _ = world
+    b = bars.copy()
+    b["est"] = False
+    b.loc[b.index[-3:], "est"] = True
+    p = D.build_chart_payload(b, None, pd.DataFrame(columns=["symbol"]), "AAA")
+    d15 = p["datasets"]["15m"]
+    assert d15["est_from"] == d15["candles"][-3]["time"] and "color" in d15["candles"][-1] and "color" not in d15["candles"][0]
+    assert p["datasets"]["1H"]["est_from"] is not None
+
+
+def test_chart_page_uses_blue_red_emas_and_a_levels_toggle():
+    from src.dashboard.chart_component import chart_html
+
+    html = chart_html(D.build_chart_payload(*(lambda b: (b, None, pd.DataFrame(columns=["symbol"]), "AAA"))(_fills_frame())))
+    assert 'ema9 = chart.addSeries(LineSeries, { color: "#4c8dff"' in html and 'ema21 = chart.addSeries(LineSeries, { color: "#ef5350"' in html
+    assert 'data-k="levels"' in html and "live est." in html

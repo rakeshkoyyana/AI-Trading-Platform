@@ -3,7 +3,7 @@
 Every task below maps 1:1 to an issue created by `scripts/create_github_issues.sh` (milestone = phase). Check items off here for a quick local view, or work from the Issues/Project board on GitHub.
 
 ## Phase 0 – Environment Setup
-- [ ] **Install Python & create venv** — Install Python 3.11, create `smc-trading-agent/` folder, run `python3 -m venv venv`, activate it.
+- [x] **Install Python & create venv** — Install Python 3.11, create `smc-trading-agent/` folder, run `python3 -m venv venv`, activate it.
 - [x] **Init git + GitHub repo** — `git init`, create private GitHub repo, add remote, first commit.
 - [x] **Create folder structure & .gitignore** — Set up `src/`, `data/`, `models/`, `tests/`, `notebooks/`; create `.gitignore` excluding `venv/`, `.env`, `data/`.
 - [x] **Create requirements.txt & install** — Add all needed packages, run `pip install -r requirements.txt`.

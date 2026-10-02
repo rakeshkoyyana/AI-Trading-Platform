@@ -44,7 +44,7 @@
       <button class="tog" data-k="structure">BOS/CHoCH</button><button class="tog" data-k="internal">Internal</button><button class="tog" data-k="swing">Swing levels</button>
       <button class="tog" data-k="pd">Prem/Disc</button><button class="tog" data-k="eq">EQH/EQL</button></div>
     <div class="grp"><span class="lbl">Show</span>
-      <button class="tog" data-k="fills" title="The Pine strategy's order fills: entries, RSI 70/30 closes, trend flips, reversals">Strategy fills</button><button class="tog" data-k="signals">Signals</button><button class="tog" data-k="trades">Trades</button><button class="tog" data-k="tlines">SL/TP lines</button></div>
+      <button class="tog" data-k="fills" title="The Pine strategy's order fills: entries, RSI 70/30 closes, trend flips, reversals">Strategy fills</button><button class="tog" data-k="signals">Signals</button><button class="tog" data-k="levels" title="Previous day / week high and low (PDH, PDL, PWH, PWL)">PDH/PDL/PWH/PWL</button><button class="tog" data-k="trades">Trades</button><button class="tog" data-k="tlines">SL/TP lines</button></div>
     <div class="grp"><span class="lbl">Draw</span>
       <button class="tool" data-t="cursor">Cursor</button><button class="tool" data-t="hline">H-line</button>
       <button class="tool" data-t="trend">Trend</button><button class="tool" data-t="rect">Box</button>
@@ -77,7 +77,7 @@
   $("#symname").textContent = P.symbol;
   const prefs = Object.assign(
     { tf: P.default_tf, ema: true, vol: true, rsi: true, ob: true, fvg: true, structure: true, internal: false, swing: true, pd: false, eq: false,
-      fills: true, signals: false, trades: true, tlines: false, magnet: false, log: false },
+      fills: true, signals: false, levels: true, trades: true, tlines: false, magnet: false, log: false },
     ls.get("tp:prefs", {})
   );
   const savePrefs = () => ls.set("tp:prefs", prefs);
@@ -110,8 +110,8 @@
     upColor: "#26a69a", downColor: "#ef5350", borderUpColor: "#26a69a", borderDownColor: "#ef5350",
     wickUpColor: "#26a69a", wickDownColor: "#ef5350", priceLineColor: "#6c8cff",
   }, 0);
-  const ema9 = chart.addSeries(LineSeries, { color: "#f5b041", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false }, 0);
-  const ema21 = chart.addSeries(LineSeries, { color: "#b388ff", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false }, 0);
+  const ema9 = chart.addSeries(LineSeries, { color: "#4c8dff", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false }, 0);
+  const ema21 = chart.addSeries(LineSeries, { color: "#ef5350", lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false }, 0);
   const vol = chart.addSeries(HistogramSeries, { priceFormat: { type: "volume" }, priceLineVisible: false, lastValueVisible: false }, 1);
   const rsi = chart.addSeries(LineSeries, { color: "#6c8cff", lineWidth: 1, priceLineVisible: false, lastValueVisible: true }, 2);
   rsi.createPriceLine({ price: 70, color: "rgba(239,83,80,.6)", lineWidth: 1, lineStyle: LineStyle.Dashed, axisLabelVisible: false });
@@ -188,7 +188,7 @@
           let x1 = xOf(g.t1);
           if (g.live) x1 = W / hr;
           if (x1 == null) continue;
-          line(Math.max(x0, 0), x1, y, g.color, g.dash, g.kind === "trade" ? g.label : "", g.kind === "trade" ? 1.2 : 1);
+          line(Math.max(x0, 0), x1, y, g.color, g.dash, (g.kind === "trade" || (g.kind === "levels" && g.lab)) ? g.label : "", g.kind === "trade" ? 1.2 : 1);
         }
         // user drawings: boxes
         for (const d of state.drawings) {
@@ -321,11 +321,12 @@
     const e9 = DS.ema9.find((x) => x.time === t), e21 = DS.ema21.find((x) => x.time === t), r = DS.rsi.find((x) => x.time === t);
     $("#legend").innerHTML =
       `<b>${P.symbol}</b><span class="k">${fmtDT.format(new Date(t * 1000))} CT</span>` +
+      (DS.est_from != null && t >= DS.est_from ? `<span style="color:#f5b041" title="Real-time IEX bar with volume rescaled to the consolidated tape; replaced by the exact SIP bar after ~15 minutes">live est.</span>` : "") +
       `<span><span class="k">O</span> ${nf(c.open)}</span><span><span class="k">H</span> ${nf(c.high)}</span>` +
       `<span><span class="k">L</span> ${nf(c.low)}</span><span><span class="k">C</span> <span class="${cls}">${nf(c.close)}</span></span>` +
       `<span class="${cls}">${chg >= 0 ? "+" : ""}${nf(chg)} (${chg >= 0 ? "+" : ""}${nf(pct)}%)</span>` +
       `<span><span class="k">Vol</span> ${vf(DS.volume[i] && DS.volume[i].value)}</span>` +
-      (prefs.ema ? `<span style="color:#f5b041">EMA9 ${nf(e9 && e9.value)}</span><span style="color:#b388ff">EMA21 ${nf(e21 && e21.value)}</span>` : "") +
+      (prefs.ema ? `<span style="color:#4c8dff">EMA9 ${nf(e9 && e9.value)}</span><span style="color:#ef5350">EMA21 ${nf(e21 && e21.value)}</span>` : "") +
       (prefs.rsi ? `<span style="color:#6c8cff">RSI ${nf(r && r.value, 1)}</span>` : "");
   }
   chart.subscribeCrosshairMove((p) => updateLegend(p));

@@ -30,6 +30,7 @@ def get_bars(
     timeframe: str,
     start: datetime,
     end: datetime | None = None,
+    feed: str | None = None,
 ) -> pd.DataFrame:
     """Return DataFrame[timestamp, open, high, low, close, volume] (UTC, naive).
 
@@ -44,7 +45,9 @@ def get_bars(
     if not s.alpaca_api_key or not s.alpaca_secret_key:
         raise RuntimeError("ALPACA_API_KEY / ALPACA_SECRET_KEY not set")
 
-    end = effective_end(end, s.data_delay_minutes)  # SIP on the free plan: nothing newer than ~15 min
+    feed = (feed or s.alpaca_data_feed).lower()
+    # SIP on the free plan: nothing newer than ~15 min. IEX is real-time, so no clamp (live tail).
+    end = effective_end(end, s.data_delay_minutes if feed == "sip" else 0)
     if start.tzinfo is None:
         start = start.replace(tzinfo=timezone.utc)
     if start >= end:
@@ -56,7 +59,7 @@ def get_bars(
         timeframe=_alpaca_timeframe(timeframe),
         start=start,
         end=end,
-        feed=DataFeed.SIP if s.alpaca_data_feed == "sip" else DataFeed.IEX,
+        feed=DataFeed.SIP if feed == "sip" else DataFeed.IEX,
         adjustment="split",
     )
     bars = client.get_stock_bars(req).df

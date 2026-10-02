@@ -41,7 +41,7 @@ def acct(**kw):
     return AccountState(**base)
 
 
-S = Settings(max_stop_pct=0.5, min_stop_atr=0.0)  # permissive stop sanity so gates are tested one at a time
+S = Settings(max_stop_pct=0.5, min_stop_atr=0.0, exit_mode="bracket")  # permissive stop sanity so gates are tested one at a time
 
 
 class FakeBundle(dict):

@@ -119,6 +119,42 @@ class Trade(Base):
     note: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
 
+class TickerMode(Base):
+    """Per-ticker trade mode chosen on the dashboard: off | ask | auto."""
+
+    __tablename__ = "ticker_modes"
+
+    symbol: Mapped[str] = mapped_column(String(16), primary_key=True)
+    mode: Mapped[str] = mapped_column(String(8))
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class PendingOrder(Base):
+    """A trade the engine wants to make on an 'ask' ticker, waiting for the user's Approve / Reject."""
+
+    __tablename__ = "pending_orders"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    direction: Mapped[str] = mapped_column(String(8))
+    qty: Mapped[int] = mapped_column(default=0)
+    entry: Mapped[float | None] = mapped_column(Float, nullable=True)
+    stop_loss: Mapped[float | None] = mapped_column(Float, nullable=True)
+    take_profit: Mapped[float | None] = mapped_column(Float, nullable=True)
+    probability: Mapped[float | None] = mapped_column(Float, nullable=True)
+    sentiment: Mapped[float | None] = mapped_column(Float, nullable=True)
+    signal_id: Mapped[int | None] = mapped_column(ForeignKey("signals.id"), nullable=True)
+    signal_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    reasons_json: Mapped[str | None] = mapped_column(String(4000), nullable=True)
+    # pending | approved | rejected | expired | executed | failed
+    status: Mapped[str] = mapped_column(String(12), default="pending", index=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    trade_id: Mapped[int | None] = mapped_column(ForeignKey("trades.id"), nullable=True)
+
+
 class ModelPrediction(Base):
     __tablename__ = "model_predictions"
 

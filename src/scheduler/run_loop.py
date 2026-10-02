@@ -25,10 +25,12 @@ from src.config import PROJECT_ROOT, Settings, get_settings
 from src.data_ingestion import get_bars_with_fallback
 from src.data_ingestion.backfill import backfill, load_bars
 from src.data_ingestion.common import TIMEFRAME_MINUTES
+from src.data_ingestion.live_tail import with_live_tail
 from src.db.schema import ModelPrediction, Trade, get_engine, init_db, session_scope
-from src.decision_engine.engine import AccountState, Decision, should_trade
+from src.decision_engine.engine import AccountState, Decision, pine_exit_reason, should_trade
+from src.execution import control
 from src.execution.base import Broker
-from src.execution.trade_log import flatten_all, reconcile, record_order
+from src.execution.trade_log import close_trade, flatten_all, reconcile, record_order
 from src.ml.predict import load_bundle
 from src.scheduler.market_hours import (
     bar_is_closed,
@@ -41,6 +43,7 @@ from src.scheduler.market_hours import (
 )
 from src.sentiment.aggregate import get_rolling_sentiment, refresh_sentiment
 from src.smc_logic.backfill_signals import backfill_signals, upsert_signal_event
+from src.smc_logic.config import SMCConfig
 from src.smc_logic.pipeline import compute_context
 
 def gating_bundle(bundle: dict | None, settings: Settings) -> tuple[dict | None, str]:
@@ -69,6 +72,8 @@ class TradingCycle:
         sentiment_fn=None,
         state_path: Path | None = None,
         history_days: int = 45,
+        fetch_live=None,
+        price_fn=None,
     ):
         self.s = settings or get_settings()
         self.engine = engine or get_engine()
@@ -82,6 +87,19 @@ class TradingCycle:
         self.history_days = history_days
         self.tf_min = TIMEFRAME_MINUTES.get(self.s.timeframe, 15)
         self._flattened_day = None
+        # live tail: newest bars from the real-time IEX feed (estimate), injected for tests
+        self.fetch_live = fetch_live if fetch_live is not None else (with_live_tail if self.s.live_hybrid else None)
+        self.price_fn = price_fn
+        self._smc = SMCConfig()
+
+    # --------------------------------------------------------------- universe
+    def modes(self) -> dict[str, str]:
+        return control.get_modes(self.engine, settings=self.s)
+
+    def universe(self, held=()) -> list[str]:
+        """Symbols to process: everything not 'off', plus anything we still hold (exits must run)."""
+        active = [k for k, v in self.modes().items() if v != "off"]
+        return list(dict.fromkeys([*active, *held]))
 
     # ----------------------------------------------------------------- state
     def _load_state(self) -> dict:
@@ -115,9 +133,11 @@ class TradingCycle:
         self._save_state(date=str(local.date()), day_start_equity=None)
         eq = self.day_start_equity(now)
         mode = "LIVE" if self.s.is_live else "PAPER"
-        self.notify(f"Session started ({mode}). Day-start equity ${eq:,.2f}. Watching {', '.join(self.s.tickers)}.", "session")
+        modes = self.modes()
+        desc = ", ".join(f"{k}:{v}" for k, v in modes.items() if v != "off") or "none (all Off)"
+        self.notify(f"Session started ({mode}). Day-start equity ${eq:,.2f}. Trade modes: {desc}.", "session")
         try:
-            refresh_sentiment(self.s.tickers, engine=self.engine)
+            refresh_sentiment(self.universe(), engine=self.engine)
         except Exception as exc:  # noqa: BLE001
             self.notify(f"Sentiment refresh failed at session start: {exc}", "warning")
 
@@ -154,8 +174,9 @@ class TradingCycle:
             f"Equity ${acct.equity:,.2f}. Reconciliation issues: {len(issues)}.", "session",
         )
         try:  # post-close maintenance: label new signals as forward bars exist
-            backfill(self.s.tickers, self.s.timeframe, months=1, incremental=True, engine=self.engine, fetch=self.fetch)
-            backfill_signals(self.s.tickers, self.s.timeframe, engine=self.engine)
+            syms = self.universe()
+            backfill(syms, self.s.timeframe, months=1, incremental=True, engine=self.engine, fetch=self.fetch)
+            backfill_signals(syms, self.s.timeframe, engine=self.engine)
         except Exception as exc:  # noqa: BLE001
             self.notify(f"Post-close maintenance failed: {exc}", "warning")
         return summary
@@ -173,7 +194,11 @@ class TradingCycle:
             state = AccountState(acct.equity, acct.buying_power, self.day_start_equity(now), positions)
             bundle, model_note = gating_bundle(self.bundle if self.bundle is not None else load_bundle(), self.s)
             can_open = force or can_open_new_positions(now, self.s)
-            for sym in self.s.tickers:
+            modes = self.modes()
+            self._modes_now = modes
+            symbols = self.universe(held=[k for k, q in positions.items() if q])
+            control.expire_stale(self.engine)
+            for sym in symbols:
                 try:
                     res = self._process_symbol(sym, now, state, bundle, can_open)
                 except Exception as exc:  # noqa: BLE001
@@ -185,7 +210,7 @@ class TradingCycle:
             out["reconcile_issues"] = len(issues)
             alerts.log_event(
                 "cycle",
-                f"{len(self.s.tickers)} symbols, {out['signals']} signal(s), {out['trades']} trade(s), "
+                f"{len(symbols)} symbols, {out['signals']} signal(s), {out['trades']} trade(s), "
                 f"equity ${acct.equity:,.2f}, model={model_note}",
                 self.engine,
             )
@@ -197,10 +222,69 @@ class TradingCycle:
     def _closed_bars(self, sym: str, now: datetime) -> pd.DataFrame:
         backfill([sym], self.s.timeframe, months=1, incremental=True, engine=self.engine, fetch=self.fetch)
         bars = load_bars(self.engine, sym, self.s.timeframe, since=now - timedelta(days=self.history_days))
-        horizon = now - timedelta(minutes=self.s.data_delay_minutes)  # data newer than this is not available/complete
+        self._est = False
+        if self.fetch_live is not None and len(bars):
+            try:
+                live, diag = self.fetch_live(bars, sym, self.s.timeframe, now=now)
+                if "est" in live.columns:
+                    bars = live
+                if diag.get("n_tail"):
+                    alerts.log_event("live_tail", f"{sym}: +{diag['n_tail']} est. bar(s), k={diag['k']:.1f}, "
+                                     f"price MAPE {diag['price_mape']:.3%}, spike agree {diag['spike_agree']:.0%}", self.engine)
+                elif diag.get("reason") and not str(diag["reason"]).startswith("no "):
+                    alerts.log_event("live_tail", f"{sym}: no live tail ({diag['reason']})", self.engine)
+            except Exception as exc:  # noqa: BLE001 - never block the cycle on the estimate
+                alerts.log_event("live_tail", f"{sym}: live tail failed: {exc}", self.engine)
+        horizon = now - timedelta(minutes=self.s.live_delay_minutes)  # data newer than this is not available/complete
         while len(bars) and not bar_is_closed(bars["timestamp"].iat[-1].to_pydatetime(), self.tf_min, horizon):
             bars = bars.iloc[:-1]  # drop the still-forming bar
+        if "est" in bars.columns:
+            self._est = bool(len(bars) and bars["est"].iat[-1])
+            bars = bars.drop(columns="est")
         return bars.reset_index(drop=True)
+
+    # ------------------------------------------------------------------ exits
+    def _open_trade_id(self, sym: str) -> int | None:
+        with session_scope(self.engine) as sx:
+            t = sx.execute(select(Trade).where(Trade.symbol == sym, Trade.status.in_(["open", "filled"]))
+                           .order_by(Trade.id.desc())).scalars().first()
+            return t.id if t else None
+
+    def _manage_exit(self, sym: str, ctx: pd.DataFrame, now: datetime, state: AccountState) -> str | None:
+        """Pine exits: close a held position on RSI >= 70 / <= 30 or a trend flip. Runs for every mode."""
+        qty = state.open_positions.get(sym) or 0
+        if not qty or self.s.exit_mode != "pine":
+            return None
+        row = ctx.iloc[-1]
+        reason = pine_exit_reason(row, "long" if qty > 0 else "short", self._smc)
+        if not reason:
+            return None
+        tid = self._open_trade_id(sym)
+        res = self.broker.close_position(sym)
+        if res is None:
+            self.notify(f"{sym}: Pine exit ({reason}) but the close order failed - check the broker", "error")
+            return None
+        px = res.filled_avg_price or float(row["close"])
+        if tid:
+            close_trade(self.engine, tid, px, f"Pine exit: {reason}")
+        state.open_positions.pop(sym, None)
+        self.notify(f"CLOSE {sym} ({'long' if qty > 0 else 'short'}) ~{px:.2f} | {reason}", "trade")
+        return reason
+
+    # ---------------------------------------------------------------- orders
+    def _execute(self, d: Decision, sig_id: int | None, state: AccountState) -> dict:
+        side = "buy" if d.direction == "long" else "sell"
+        order = self.broker.place_order(d.symbol, side, d.qty, d.stop_loss, d.take_profit)
+        tid = record_order(self.engine, d, order, "live" if self.s.is_live else "paper", sig_id)
+        if order.is_rejected or not order.id:
+            self.notify(f"{d.symbol}: order REJECTED ({order.message or order.status})", "warning")
+            return dict(order="rejected", trade_id=tid)
+        state.open_positions[d.symbol] = d.qty if d.direction == "long" else -d.qty
+        p = f"P(win) {d.probability:.2f}, " if d.probability is not None else ""
+        tgt = f"target {d.take_profit} ({d.target_source})" if d.take_profit else "exit by Pine rules (RSI 70/30, trend flip)"
+        self.notify(f"{d.direction.upper()} {d.symbol} x{d.qty} @ ~{d.entry:.2f} | stop {d.stop_loss} "
+                    f"({d.stop_source or 'saved'}) | {tgt} | {p}", "trade")
+        return dict(traded=True, trade_id=tid, qty=d.qty)
 
     def _process_symbol(self, sym: str, now: datetime, state: AccountState, bundle, can_open: bool) -> dict:
         bars = self._closed_bars(sym, now)
@@ -208,12 +292,20 @@ class TradingCycle:
             return dict(skipped=f"only {len(bars)} bars (< {MIN_BARS})")
         ctx = compute_context(bars)
         sig_id = upsert_signal_event(self.engine, sym, self.s.timeframe, ctx)
+        mode = (getattr(self, "_modes_now", None) or self.modes()).get(sym, control.default_mode(sym, self.s))
+        exited = self._manage_exit(sym, ctx, now, state)
+
         sentiment = self.sentiment_fn(sym)
         d = should_trade(sym, ctx, state, self.s, bundle, sentiment, now, self.s.timeframe)
         if d.trade and not can_open:
             d.block("session_cutoff", "no new entries this close to the end of the session")
+        if d.trade and mode == "off":
+            d.block("mode_off", "trading is switched Off for this ticker on the dashboard")
 
-        res = dict(signal=ctx["signal_event"].iat[-1] != "none", traded=False, blocked_by=d.blocked_by)
+        res = dict(signal=ctx["signal_event"].iat[-1] != "none", traded=False, blocked_by=d.blocked_by,
+                   mode=mode, estimated=self._est)
+        if exited:
+            res["exit"] = exited
         if res["signal"]:
             alerts.log_event("decision", d.explain(), self.engine)
             if d.probability is not None and sig_id:
@@ -223,22 +315,63 @@ class TradingCycle:
         if not d.trade:
             return res
 
-        side = "buy" if d.direction == "long" else "sell"
-        order = self.broker.place_order(sym, side, d.qty, d.stop_loss, d.take_profit)
-        tid = record_order(self.engine, d, order, "live" if self.s.is_live else "paper", sig_id)
-        if order.is_rejected or not order.id:
-            self.notify(f"{sym}: order REJECTED ({order.message or order.status})", "warning")
-            res["order"] = "rejected"
+        if mode == "ask":
+            pid = control.create_pending(self.engine, d, sig_id, settings=self.s)
+            if pid:
+                res["pending"] = pid
+                tgt = f"stop {d.stop_loss}" + ("" if d.take_profit is None else f", target {d.take_profit}")
+                self.notify(f"APPROVE? {d.direction.upper()} {sym} x{d.qty} @ ~{d.entry:.2f} | {tgt} | open the "
+                            f"dashboard to approve (expires in {self.s.approval_ttl_minutes} min)", "trade")
             return res
-        state.open_positions[sym] = d.qty if d.direction == "long" else -d.qty
-        res.update(traded=True, trade_id=tid, qty=d.qty)
-        p = f"P(win) {d.probability:.2f}, " if d.probability is not None else ""
-        self.notify(
-            f"{d.direction.upper()} {sym} x{d.qty} @ ~{d.entry:.2f} | stop {d.stop_loss} ({d.stop_source}) "
-            f"| target {d.take_profit} ({d.target_source}) | {p}R:R {d.reward_risk:.2f}",
-            "trade",
-        )
+        out = self._execute(d, sig_id, state)
+        res.update(out)
         return res
+
+    # -------------------------------------------------------------- approvals
+    def process_approvals(self, now: datetime | None = None, force: bool = False) -> list[dict]:
+        """Execute entries the user approved on the dashboard (re-validated at the moment of sending)."""
+        now = now or utc_now()
+        results: list[dict] = []
+        control.expire_stale(self.engine)
+        approved = control.list_pending(self.engine, "approved")
+        if not approved:
+            return results
+        if not force and not is_trading_window_now(now, self.s):
+            for p in approved:
+                control.mark(self.engine, p.id, "failed", "approved outside the trading window")
+            return results
+        can_open = force or can_open_new_positions(now, self.s)
+        acct = self.broker.get_account()
+        positions = {p.symbol: p.qty for p in self.broker.get_positions()}
+        state = AccountState(acct.equity, acct.buying_power, self.day_start_equity(now), positions)
+        for p in approved:
+            why = None
+            if not can_open:
+                why = "too close to the end of the session"
+            elif positions.get(p.symbol):
+                why = "already holding this ticker"
+            elif len([q for q in positions.values() if q]) >= self.s.max_open_positions:
+                why = "max open positions reached"
+            elif state.daily_pnl_pct <= -self.s.max_daily_loss_pct:
+                why = "daily loss limit reached"
+            else:
+                px = self.price_fn(p.symbol) if self.price_fn else None
+                if px and p.stop_loss and ((p.direction == "long" and px <= p.stop_loss)
+                                           or (p.direction == "short" and px >= p.stop_loss)):
+                    why = f"price {px:.2f} is already beyond the stop {p.stop_loss}"
+            if why:
+                control.mark(self.engine, p.id, "failed", why)
+                self.notify(f"{p.symbol}: approved order NOT sent - {why}", "warning")
+                results.append(dict(id=p.id, symbol=p.symbol, sent=False, why=why))
+                continue
+            out = self._execute(control.decision_from_pending(p), p.signal_id, state)
+            positions = {k: v for k, v in state.open_positions.items()}
+            if out.get("traded"):
+                control.mark(self.engine, p.id, "executed", trade_id=out.get("trade_id"))
+            else:
+                control.mark(self.engine, p.id, "failed", "broker rejected the order", trade_id=out.get("trade_id"))
+            results.append(dict(id=p.id, symbol=p.symbol, sent=bool(out.get("traded"))))
+        return results
 
 
 # ------------------------------------------------------------------ scheduler
@@ -253,6 +386,7 @@ def build_scheduler(cycle: TradingCycle):
     from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_MISSED
     from apscheduler.schedulers.blocking import BlockingScheduler
     from apscheduler.triggers.cron import CronTrigger
+    from apscheduler.triggers.interval import IntervalTrigger
 
     s = cycle.s
     tz = s.timezone
@@ -264,14 +398,16 @@ def build_scheduler(cycle: TradingCycle):
     sched.add_job(cycle.start_session, CronTrigger(day_of_week=dow, hour=sh, minute=max(sm - 5, 0), timezone=tz),
                   id="session_start", misfire_grace_time=600)
     sched.add_job(cycle.run_cycle,
-                  CronTrigger(day_of_week=dow, hour=f"{sh}-{eh - 1}", minute=_cron_minutes(cycle.tf_min, s.data_delay_minutes),
+                  CronTrigger(day_of_week=dow, hour=f"{sh}-{eh - 1}", minute=_cron_minutes(cycle.tf_min, s.live_delay_minutes),
                               second=s.bar_delay_seconds, timezone=tz),
                   id="cycle", max_instances=1, coalesce=True, misfire_grace_time=120)
+    sched.add_job(cycle.process_approvals, IntervalTrigger(seconds=10, timezone=tz), id="approvals",
+                  max_instances=1, coalesce=True)
     sched.add_job(cycle.maybe_flatten, CronTrigger(day_of_week=dow, hour=f"{sh}-{eh}", minute="*", timezone=tz),
                   id="flatten", max_instances=1, coalesce=True)
     sched.add_job(cycle.end_session, CronTrigger(day_of_week=dow, hour=eh, minute=em + 2, timezone=tz),
                   id="session_end", misfire_grace_time=1800)
-    sched.add_job(lambda: refresh_sentiment(s.tickers, engine=cycle.engine),
+    sched.add_job(lambda: refresh_sentiment(cycle.universe(), engine=cycle.engine),
                   CronTrigger(day_of_week=dow, hour=f"{sh}-{eh - 1}", minute=5, timezone=tz),
                   id="sentiment", max_instances=1, coalesce=True)
 
@@ -300,7 +436,7 @@ def main() -> None:
     s = get_settings()
     cycle = TradingCycle(broker=get_broker(s), settings=s)
     mode = "LIVE" if s.is_live else "PAPER"
-    print(f"[run_loop] mode={mode} broker={cycle.broker.name} tickers={s.tickers} tf={s.timeframe}")
+    print(f"[run_loop] mode={mode} broker={cycle.broker.name} tickers={s.tickers} modes={cycle.modes()} tf={s.timeframe}")
     if a.once:
         print(json.dumps(cycle.run_cycle(force=a.force), indent=2, default=str))
         return

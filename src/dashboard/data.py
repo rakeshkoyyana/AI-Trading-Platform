@@ -25,7 +25,9 @@ MIN_CTX_BARS = 120  # below this the SMC context is mostly warm-up noise, so no 
 # bars shown per timeframe (the context is always computed on everything we have, for warm-up)
 DISPLAY_BARS = {"5Min": 4500, "15Min": 2600, "30Min": 1800, "1Hour": 1500}
 UP, DOWN, ACCENT, AMBER, MUTED = "#26a69a", "#ef5350", "#6c8cff", "#f5b041", "#8a90ab"
-PURPLE = "#b061ff"  # strategy order fills (TradingView draws these for strategy() scripts)
+PURPLE = "#b061ff"  # a strategy CLOSE order (TradingView: "Close entry(s) order ...")
+INITIAL_CAPITAL, QTY_PCT = 10_000, 0.10  # the Pine script's strategy() settings, used for the order-size labels
+LONG_BLUE, SHORT_RED = "#4c8dff", "#ef5350"  # strategy entries: Long = blue arrow up, Short = red arrow down
 
 
 def _epoch(ts) -> int:
@@ -54,6 +56,7 @@ def resample_bars(df: pd.DataFrame, tf: str) -> pd.DataFrame:
         out = rth.groupby(day, sort=True).agg(
             timestamp=("timestamp", "first"), open=("open", "first"), high=("high", "max"),
             low=("low", "min"), close=("close", "last"), volume=("volume", "sum"),
+            **({"est": ("est", "max")} if "est" in rth.columns else {}),
         )
         return out.reset_index(drop=True)
     width = _WIDTH[tf]
@@ -64,6 +67,7 @@ def resample_bars(df: pd.DataFrame, tf: str) -> pd.DataFrame:
     start = (et.dt.normalize() + pd.to_timedelta(offset, unit="m")).dt.tz_convert("UTC").dt.tz_localize(None)
     out = df.groupby(start.to_numpy(), sort=True).agg(
         open=("open", "first"), high=("high", "max"), low=("low", "min"), close=("close", "last"), volume=("volume", "sum"),
+        **({"est": ("est", "max")} if "est" in df.columns else {}),
     )
     out.insert(0, "timestamp", pd.to_datetime(out.index))
     return out.reset_index(drop=True)
@@ -76,14 +80,22 @@ def _line(ts_ep: np.ndarray, vals: np.ndarray) -> list[dict]:
 def dataset_for(df: pd.DataFrame) -> dict:
     """Candles, volume, EMA9/21 and RSI14 for one timeframe."""
     if df.empty:
-        return dict(candles=[], volume=[], ema9=[], ema21=[], rsi=[])
+        return dict(candles=[], volume=[], ema9=[], ema21=[], rsi=[], est_from=None)
     t = np.array([_epoch(x) for x in df["timestamp"]])
     o, h, l, c, v = (df[k].to_numpy(float) for k in ("open", "high", "low", "close", "volume"))
-    candles = [dict(time=int(t[i]), open=round(o[i], 4), high=round(h[i], 4), low=round(l[i], 4), close=round(c[i], 4))
-               for i in range(len(df))]
+    est = df["est"].to_numpy(bool) if "est" in df.columns else np.zeros(len(df), dtype=bool)
+    candles = []
+    for i in range(len(df)):
+        bar = dict(time=int(t[i]), open=round(o[i], 4), high=round(h[i], 4), low=round(l[i], 4), close=round(c[i], 4))
+        if est[i]:  # live estimate (real-time IEX, rescaled): drawn faded until the exact SIP bar replaces it
+            col = "rgba(38,166,154,.35)" if c[i] >= o[i] else "rgba(239,83,80,.35)"
+            bar.update(color=col, borderColor=UP if c[i] >= o[i] else DOWN, wickColor=col)
+        candles.append(bar)
     volume = [dict(time=int(t[i]), value=float(v[i]), color=("rgba(38,166,154,.45)" if c[i] >= o[i] else "rgba(239,83,80,.45)"))
               for i in range(len(df))]
-    return dict(candles=candles, volume=volume, ema9=_line(t, _ema(c, 9)), ema21=_line(t, _ema(c, 21)), rsi=_line(t, _rsi(c, 14)))
+    est_from = int(t[np.argmax(est)]) if est.any() else None
+    return dict(candles=candles, volume=volume, ema9=_line(t, _ema(c, 9)), ema21=_line(t, _ema(c, 21)),
+                rsi=_line(t, _rsi(c, 14)), est_from=est_from)
 
 
 # ------------------------------------------------------------- SMC overlays
@@ -194,7 +206,8 @@ def smc_overlays(ctx: pd.DataFrame) -> dict:
 def strategy_fills(df: pd.DataFrame, cfg=None) -> list[dict]:
     """The Pine strategy's order fills, as TradingView draws them for `strategy()` scripts.
 
-    Entries (Buy/Sell), closes when RSI crosses the 70/30 limits or the EMA trend flips, and reversals
+    Entries (Long = blue arrow up, Short = red arrow down), closes in purple when RSI reaches the 70/30 limits or the
+    EMA trend flips (`strategy.close`), and reversals
     (an opposite entry that closes the open position on the same bar). Orders fill at the NEXT bar's open,
     so each marker sits on the fill bar. Computed on the timeframe's own bars, like TradingView.
     """
@@ -214,18 +227,25 @@ def strategy_fills(df: pd.DataFrame, cfg=None) -> list[dict]:
     entries = {(pd.Timestamp(r.entry_time), r.direction) for r in tr.itertuples(index=False)}
     exits = {(pd.Timestamp(r.exit_time), r.direction) for r in tr.itertuples(index=False) if pd.notna(r.exit_time)}
     out = []
+    equity, prev_qty = float(INITIAL_CAPITAL), 0  # TradingView: default_qty_type=percent_of_equity, value 10
     for r in tr.itertuples(index=False):
         long = r.direction == "long"
         et = pd.Timestamp(r.entry_time)
         opposite = "short" if long else "long"
         rev_from = opposite if (et, opposite) in exits else None
-        text = ("Buy" if long else "Sell") + (" · reverse" if rev_from else "")
+        qty = max(int(math.floor(equity * QTY_PCT / float(r.entry_price))), 0)
+        shown_qty = qty + (prev_qty if rev_from else 0)  # a reversal closes the old position AND opens the new one
+        text = (f"Long +{shown_qty}" if long else f"Short -{shown_qty}") + (" · reverse" if rev_from else "")
         out.append(dict(time=_epoch(et), pos="below" if long else "above", shape="arrowUp" if long else "arrowDown",
-                        color=PURPLE, text=text, kind="fills"))
+                        color=LONG_BLUE if long else SHORT_RED, text=text, kind="fills"))
         if pd.isna(r.exit_time):
             continue
+        if pd.notna(r.exit_price):
+            pnl_here = (float(r.exit_price) - float(r.entry_price)) * qty * (1 if long else -1)
         xt = pd.Timestamp(r.exit_time)
         if (xt, opposite) in entries:
+            equity += pnl_here  # reversal: no separate marker, but the P&L is realised
+            prev_qty = qty
             continue  # shown as the reversing entry above instead of two stacked arrows
         i = pos_of.get(xt)
         sb = i - 1 if i else None
@@ -236,7 +256,57 @@ def strategy_fills(df: pd.DataFrame, cfg=None) -> list[dict]:
         else:
             why = f"RSI ≤ {cfg.rsi_oversold:g}" if rsi[sb] <= cfg.rsi_oversold else ("trend flip" if bull[sb] else "exit")
         out.append(dict(time=_epoch(xt), pos="above" if long else "below", shape="arrowDown" if long else "arrowUp",
-                        color=PURPLE, text=f"Close · {why}", kind="fills"))
+                        color=PURPLE, text=f"Close {'Long' if long else 'Short'} {'-' if long else '+'}{qty} · {why}", kind="fills"))
+        if pd.notna(r.exit_price):  # realised P&L feeds the next order's size, like TradingView's equity
+            equity += (float(r.exit_price) - float(r.entry_price)) * qty * (1 if long else -1)
+        prev_qty = qty
+    return out
+
+
+
+# ------------------------------------------------------- PDH / PDL / PWH / PWL
+LEVEL_COLORS = {"PDH": "#f5b041", "PDL": "#f5b041", "PWH": "#9575cd", "PWL": "#9575cd"}
+
+
+def prior_levels(src: pd.DataFrame, shown: pd.DataFrame, native: str) -> list[dict]:
+    """Previous-day / previous-week high & low (regular session) drawn across each current day / week.
+
+    Levels come from the native bars (`src`) and are laid over `shown`'s bars: the previous day's high/low across each
+    day, the previous week's across each week. The newest segment extends to the right edge.
+    """
+    if src is None or len(src) == 0 or shown is None or len(shown) == 0 or native == "1Day":
+        return []
+    ts = pd.to_datetime(src["timestamp"])
+    et = ts.dt.tz_localize("UTC").dt.tz_convert("America/New_York")
+    rth = regular_hours_mask(src["timestamp"], native if native in ("5Min", "15Min") else "15Min").to_numpy()
+    r = src[rth].assign(d=et[rth].dt.date.to_numpy())
+    if r.empty:
+        return []
+    daily = r.groupby("d").agg(hi=("high", "max"), lo=("low", "min"))
+    daily.index = pd.to_datetime(daily.index)
+    weekly = daily.groupby(daily.index.to_period("W")).agg(hi=("hi", "max"), lo=("lo", "min"))
+
+    sh_et = pd.to_datetime(shown["timestamp"]).dt.tz_localize("UTC").dt.tz_convert("America/New_York")
+    sh = pd.DataFrame({"t": [_epoch(x) for x in shown["timestamp"]], "d": pd.to_datetime(sh_et.dt.date.to_numpy())})
+    sh["w"] = sh["d"].dt.to_period("W")
+    out: list[dict] = []
+    days = sh.groupby("d", sort=True)
+    last_day = sh["d"].max()
+    for d, g in days:
+        prev = daily[daily.index < d]
+        if prev.empty:
+            continue
+        for name, val in (("PDH", prev["hi"].iat[-1]), ("PDL", prev["lo"].iat[-1])):
+            out.append(dict(t0=int(g["t"].iat[0]), t1=int(g["t"].iat[-1]), p=round(float(val), 4), color=LEVEL_COLORS[name],
+                            label=name, dash=True, kind="levels", lab=bool(d == last_day), live=bool(d == last_day)))
+    last_week = sh["w"].max()
+    for w, g in sh.groupby("w", sort=True):
+        prev = weekly[weekly.index < w]
+        if prev.empty:
+            continue
+        for name, val in (("PWH", prev["hi"].iat[-1]), ("PWL", prev["lo"].iat[-1])):
+            out.append(dict(t0=int(g["t"].iat[0]), t1=int(g["t"].iat[-1]), p=round(float(val), 4), color=LEVEL_COLORS[name],
+                            label=name, dash=True, kind="levels", lab=bool(w == last_week), live=bool(w == last_week)))
     return out
 
 
@@ -281,6 +351,7 @@ def _tf_dataset(src: pd.DataFrame, native: str, ctx: pd.DataFrame | None = None)
     ds = dataset_for(shown)
     ov = smc_overlays(ctx) if ctx is not None else dict(zones=[], segs=[], markers=[])
     ov["markers"] = ov["markers"] + strategy_fills(full)
+    ov["segs"] = ov["segs"] + prior_levels(src, shown, native)
     if len(shown):
         t0 = _epoch(shown["timestamp"].iat[0])
         ov = dict(

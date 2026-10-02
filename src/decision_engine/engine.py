@@ -72,6 +72,27 @@ def _signal_summary(row: pd.Series, direction: str) -> str:
     )
 
 
+def pine_exit_reason(row: pd.Series, direction: str, cfg=None) -> str | None:
+    """Why the Pine strategy would close an open position on this (closed) bar, else None.
+
+    Mirrors `exitLong = trendBearish or rsi >= 70` / `exitShort = trendBullish or rsi <= 30`.
+    """
+    hi = getattr(cfg, "rsi_overbought", 70)
+    lo = getattr(cfg, "rsi_oversold", 30)
+    rsi = float(row["rsi"])
+    if direction == "long":
+        if bool(row["trend_bear"]):
+            return "trend flip (EMA9 < EMA21)"
+        if rsi >= hi:
+            return f"RSI {rsi:.1f} >= {hi:g}"
+    else:
+        if bool(row["trend_bull"]):
+            return "trend flip (EMA9 > EMA21)"
+        if rsi <= lo:
+            return f"RSI {rsi:.1f} <= {lo:g}"
+    return None
+
+
 def should_trade(
     symbol: str,
     ctx: pd.DataFrame,
@@ -149,6 +170,9 @@ def should_trade(
     entry = float(row["close"])
     lv = stop_target_levels(row, direction, entry=entry, min_rr=s.min_rr)
     d.entry, d.stop_loss, d.take_profit = entry, round(lv.stop, 2), round(lv.target, 2)
+    pine_exits = s.exit_mode == "pine"
+    if pine_exits:
+        d.take_profit = None  # the Pine rules close the trade; only the protective stop is placed
     d.stop_source, d.target_source, d.reward_risk = lv.stop_source, lv.target_source, lv.reward_risk
     risk = abs(entry - d.stop_loss)
     atr = float(row["atr"]) if not math.isnan(float(row["atr"])) else entry * 0.005
@@ -158,9 +182,12 @@ def should_trade(
         return d.block("stop_too_wide", f"stop {risk / entry:.2%} of price > {s.max_stop_pct:.2%}")
     if risk < s.min_stop_atr * atr:
         return d.block("stop_too_tight", f"stop {risk:.2f} < {s.min_stop_atr} ATR ({atr:.2f}); noise would hit it")
-    d.reasons.append(
-        f"stop {d.stop_loss} ({lv.stop_source}), target {d.take_profit} ({lv.target_source}), R:R {lv.reward_risk:.2f}"
-    )
+    if pine_exits:
+        d.reasons.append(f"protective stop {d.stop_loss} ({lv.stop_source}); exit by Pine rules (RSI 70/30 or trend flip)")
+    else:
+        d.reasons.append(
+            f"stop {d.stop_loss} ({lv.stop_source}), target {d.take_profit} ({lv.target_source}), R:R {lv.reward_risk:.2f}"
+        )
 
     # --- sizing ----------------------------------------------------------------
     risk_dollars = account.equity * s.risk_per_trade_pct

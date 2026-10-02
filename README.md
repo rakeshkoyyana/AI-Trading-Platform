@@ -18,20 +18,9 @@ An automated trading agent that ports an existing Pine Script "triple confirmati
 
 ## Architecture
 
-```
-Market Data (Alpaca/yfinance) ──┐
-                                  ├──> Feature Engineering (SMC logic ported from Pine Script) ──> ML Model (win-probability filter) ──┐
-News Feed (Finnhub/NewsAPI) ────┤                                                                                                     │
-                                  └──> Sentiment Scoring (FinBERT, local)  ──────────────────────────────────────────────────────────┤
-                                                                                                                                        ↓
-                                                                                                                          Decision Engine (triple confirmation + ML + sentiment + risk rules)
-                                                                                                                                        ↓
-                                                                                                                          Execution Layer (Alpaca first, Robinhood optional)
-                                                                                                                                        ↓
-                                                                                                                          Trade Logger (SQLite / Supabase)
-                                                                                                                                        ↓
-                                                                                                          Scheduler (8:30am–3:00pm CST) ⇄ Dashboard (Streamlit)
-```
+![AlphaWave architecture](assets/diagrams/architecture.png)
+
+Full explanation and a GitHub-native Mermaid version: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Tech stack (all free-tier)
 

@@ -48,6 +48,9 @@ class Settings:
     # Alpaca's free plan serves SIP only for data older than 15 minutes. Everything that reads bars therefore
     # works on data at least this many minutes old. Set 0 if the account has a real-time SIP subscription.
     sip_delay_minutes: int = 16
+    # With the free SIP plan, the newest ~16 minutes of bars come from the real-time IEX feed instead, with volume
+    # rescaled to SIP scale (see data_ingestion/live_tail.py), so signals fire at bar close, not 16 minutes later.
+    live_hybrid: bool = True
     # True: indicators/signals/models use every stored bar (pre/post-market included, matching a
     # TradingView chart with "Extended hours" on). False: regular session 09:30-16:00 ET only.
     # Bars are always STORED unfiltered; this only changes what load_bars() returns.
@@ -62,6 +65,13 @@ class Settings:
     min_model_probability: float = 0.55
     sentiment_block_threshold: float = 0.5  # |score| beyond this blocks counter-trend
     allow_shorts: bool = True
+    # "pine": a trade ends exactly like the Pine strategy (RSI >= 70 / <= 30 or EMA trend flip, reversing on the opposite
+    # signal) with an SMC protective stop attached at the broker. "bracket": SMC stop AND target attached at entry.
+    exit_mode: str = "pine"
+    # What happens to a new signal on a ticker nobody has set a mode for (TICKERS only; starred symbols default to off):
+    # "off" ignore, "ask" propose it on the dashboard and wait for Approve, "auto" trade it.
+    default_trade_mode: str = "ask"
+    approval_ttl_minutes: int = 10  # an unanswered proposal expires after this long
     use_unvalidated_model: bool = False  # True: let a model that did NOT beat raw signals OOS gate trades
     require_model: bool = False  # True: refuse to trade until a trained model exists
     max_stop_pct: float = 0.05  # reject setups whose stop is wider than this % of price
@@ -83,6 +93,11 @@ class Settings:
         return self.trading_mode == "live"
 
     @property
+    def live_delay_minutes(self) -> int:
+        """How long after a bar closes the trading loop waits before using it (0 when the hybrid feed fills the gap)."""
+        return 0 if self.live_hybrid else self.data_delay_minutes
+
+    @property
     def data_delay_minutes(self) -> int:
         """How far behind the wall clock the usable market data is."""
         return max(self.sip_delay_minutes, 0) if self.alpaca_data_feed == "sip" else 0
@@ -101,6 +116,10 @@ def get_settings() -> Settings:
         raise ValueError(f"TRADING_MODE must be 'paper' or 'live', got {mode!r}")
     if (env("ALPACA_DATA_FEED", "sip") or "sip").lower() not in {"sip", "iex"}:
         raise ValueError("ALPACA_DATA_FEED must be 'sip' or 'iex'")
+    if (env("EXIT_MODE", "pine") or "pine").lower() not in {"pine", "bracket"}:
+        raise ValueError("EXIT_MODE must be 'pine' or 'bracket'")
+    if (env("DEFAULT_TRADE_MODE", "ask") or "ask").lower() not in {"off", "ask", "auto"}:
+        raise ValueError("DEFAULT_TRADE_MODE must be 'off', 'ask' or 'auto'")
     return Settings(
         alpaca_api_key=env("ALPACA_API_KEY", ""),
         alpaca_secret_key=env("ALPACA_SECRET_KEY", ""),
@@ -112,6 +131,10 @@ def get_settings() -> Settings:
         timeframe=env("TIMEFRAME", "15Min"),
         alpaca_data_feed=(env("ALPACA_DATA_FEED", "sip") or "sip").lower(),
         sip_delay_minutes=int(env("SIP_DELAY_MINUTES", "16")),
+        live_hybrid=env("LIVE_HYBRID", "true").lower() in {"1", "true", "yes", "on"},
+        exit_mode=(env("EXIT_MODE", "pine") or "pine").lower(),
+        default_trade_mode=(env("DEFAULT_TRADE_MODE", "ask") or "ask").lower(),
+        approval_ttl_minutes=int(env("APPROVAL_TTL_MINUTES", "10")),
         include_extended_hours=env("INCLUDE_EXTENDED_HOURS", "true").lower() in {"1", "true", "yes", "on"},
         database_url=env(
             "DATABASE_URL", f"sqlite:///{PROJECT_ROOT / 'data' / 'trading.db'}"

@@ -22,7 +22,7 @@ class _Bracket:
     qty: int
     direction: str
     stop: float
-    target: float
+    target: float | None
     stop_id: str
     target_id: str
 
@@ -86,16 +86,15 @@ class SimBroker(Broker):
         self._apply_fill(symbol, signed, fill)
         oid = f"sim-{next(self._ids)}"
         res = OrderResult(oid, symbol, side, qty, "filled", qty, fill)
-        if stop_loss is not None and take_profit is not None:
+        if stop_loss is not None:
             sid, tid = f"sim-{next(self._ids)}", f"sim-{next(self._ids)}"
             exit_side = "sell" if side == "buy" else "buy"
-            res.legs = [
-                OrderResult(sid, symbol, exit_side, qty, "new", order_type="stop"),
-                OrderResult(tid, symbol, exit_side, qty, "new", order_type="limit"),
-            ]
+            res.legs = [OrderResult(sid, symbol, exit_side, qty, "new", order_type="stop")]
+            if take_profit is not None:
+                res.legs.append(OrderResult(tid, symbol, exit_side, qty, "new", order_type="limit"))
             self.brackets.append(
                 _Bracket(oid, symbol, qty, "long" if side == "buy" else "short",
-                         float(stop_loss), float(take_profit), sid, tid)
+                         float(stop_loss), None if take_profit is None else float(take_profit), sid, tid)
             )
         self.orders[oid] = res
         return res
@@ -108,7 +107,7 @@ class SimBroker(Broker):
                 continue
             long = b.direction == "long"
             hit_stop = low <= b.stop if long else high >= b.stop
-            hit_tgt = high >= b.target if long else low <= b.target
+            hit_tgt = False if b.target is None else (high >= b.target if long else low <= b.target)
             if not (hit_stop or hit_tgt):
                 continue
             px, leg_id, other = (b.stop, b.stop_id, b.target_id) if hit_stop else (b.target, b.target_id, b.stop_id)

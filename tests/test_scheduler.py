@@ -11,7 +11,7 @@ from src.execution.sim_broker import SimBroker
 from src.scheduler import market_hours as mh
 from src.scheduler.run_loop import TradingCycle, build_scheduler
 
-S = Settings(max_stop_pct=0.5, min_stop_atr=0.0, tickers=["AAA", "BBB"], sip_delay_minutes=0)
+S = Settings(max_stop_pct=0.5, min_stop_atr=0.0, tickers=["AAA", "BBB"], sip_delay_minutes=0, live_hybrid=False, exit_mode="bracket", default_trade_mode="auto")
 
 
 def utc(y, m, d, h, mi=0):
@@ -177,7 +177,7 @@ def test_too_few_bars_is_skipped_not_traded(world):
 def test_kill_switch_blocks_all_trades(world, tmp_path):
     ks = tmp_path / "KS"
     ks.write_text("x")
-    s = Settings(max_stop_pct=0.5, min_stop_atr=0.0, tickers=["AAA", "BBB"], kill_switch_file=ks, sip_delay_minutes=0)
+    s = Settings(max_stop_pct=0.5, min_stop_atr=0.0, tickers=["AAA", "BBB"], kill_switch_file=ks, sip_delay_minutes=0, live_hybrid=False, exit_mode="bracket", default_trade_mode="auto")
     c = world["make"](settings=s)
     df = world["frames"]["AAA"]
     for k in range(len(df) - 300, len(df), 3):
@@ -212,7 +212,7 @@ def test_flatten_runs_once_at_cutoff(world):
 
 
 def test_flatten_respects_setting_and_after_close(world):
-    s = Settings(max_stop_pct=0.5, min_stop_atr=0.0, tickers=["AAA"], flatten_at_close=False, sip_delay_minutes=0)
+    s = Settings(max_stop_pct=0.5, min_stop_atr=0.0, tickers=["AAA"], flatten_at_close=False, sip_delay_minutes=0, live_hybrid=False, exit_mode="bracket", default_trade_mode="auto")
     assert not world["make"](settings=s).maybe_flatten(utc(2026, 10, 7, 19, 56))
     assert not world["make"]().maybe_flatten(utc(2026, 10, 7, 20, 30))
 
@@ -226,7 +226,7 @@ def test_end_session_summarises(world):
 
 def test_build_scheduler_registers_all_jobs(world):
     sched = build_scheduler(world["make"]())
-    assert {j.id for j in sched.get_jobs()} == {"session_start", "cycle", "flatten", "session_end", "sentiment"}
+    assert {j.id for j in sched.get_jobs()} == {"session_start", "cycle", "flatten", "session_end", "sentiment", "approvals"}
 
 
 def test_model_that_does_not_improve_never_gates_trades():

@@ -130,6 +130,22 @@ class SimBroker(Broker):
     def get_order(self, order_id: str) -> OrderResult | None:
         return self.orders.get(order_id)
 
+    def modify_exit_levels(self, symbol: str, stop: float | None, target: float | None) -> tuple[bool, str]:
+        b = next((x for x in self.brackets if x.symbol == symbol and symbol in self.positions), None)
+        if b is None:
+            return False, "no resting stop order found at the broker"
+        msgs = []
+        if stop is not None:
+            b.stop = float(stop)
+            msgs.append(f"stop -> {float(stop):.2f}")
+        if target is not None:
+            if b.target is None:
+                msgs.append("target NOT changed (this trade has no take-profit order)")
+            else:
+                b.target = float(target)
+                msgs.append(f"target -> {float(target):.2f}")
+        return True, "; ".join(msgs)
+
     def protected_symbols(self) -> set[str] | None:
         return {b.symbol for b in self.brackets if b.symbol in self.positions}
 

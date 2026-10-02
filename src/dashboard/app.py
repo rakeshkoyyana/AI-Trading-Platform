@@ -30,7 +30,7 @@ from src.dashboard import brand
 from src.dashboard import data as D
 from src.dashboard import metrics as m
 from src.dashboard import theme as T
-from src.dashboard.chart_component import chart_html
+from src.dashboard.chart_component import chart_html, chart_widget
 from src.data_ingestion.backfill import latest_bar_time, load_bars
 from src.data_ingestion.on_demand import ensure_symbol_data
 from src.decision_engine import council
@@ -360,6 +360,26 @@ with left:
             st.rerun()
         c2.caption(f"{names.get(sym) or sym} · research only until you set its mode to Ask or Auto in Trade control.")
 
+    def _chart_action(act, sym_: str) -> None:
+        """Carry out what the user did on the chart: confirm / reject a proposal, or move an open position's SL / TP."""
+        if not act or act.get("seq") == st.session_state.get("_chart_seq"):
+            return
+        st.session_state["_chart_seq"] = act.get("seq")
+        kind = act.get("type")
+        if kind == "confirm_pending":
+            ok, why = control.update_pending_levels(engine, int(act["id"]), act.get("stop"), act.get("target"), S)
+            if ok:
+                ok = control.decide(engine, int(act["id"]), True)
+                why = "" if ok else "that request expired"
+            st.toast("Confirmed with your levels – sending within ~2 s" if ok else f"Not sent: {why}", icon="✅" if ok else "⚠️")
+        elif kind == "reject_pending":
+            control.decide(engine, int(act["id"]), False)
+            st.toast("Rejected")
+        elif kind == "modify_position":
+            rid, why = control.request_modify(engine, act.get("symbol") or sym_, act.get("stop"), act.get("target"), settings=S)
+            st.toast("New stop / target queued – applied at the broker within ~2 s" if rid else f"Not applied: {why}", icon="✅" if rid else "⚠️")
+        st.rerun()
+
     @st.fragment(run_every=("60s" if RUN_EVERY else None))
     def chart_panel():
         if sym not in tickers or _last_ts(sym, "15Min") == "none":
@@ -371,7 +391,9 @@ with left:
         if not core["t_last"]:
             st.info(f"No bars stored for {sym}. Run `python -m src.data_ingestion.backfill`.")
             return
-        _render_html(chart_html(D.with_trades(core, trades_all)), 760)
+        payload = D.with_trades(core, trades_all)
+        payload["live"] = control.chart_levels(engine, sym, utc_now())
+        _chart_action(chart_widget(chart_html(payload), key=f"chart_{sym}", height=760), sym)
 
     chart_panel()
 

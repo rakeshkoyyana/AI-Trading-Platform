@@ -29,6 +29,12 @@
   #legend b { font-size:13px; } .k { color:var(--muted); } .up { color:var(--up); } .dn { color:var(--down); }
   #measure { position:absolute; z-index:6; pointer-events:none; display:none; background:var(--panel2); border:1px solid var(--amber);
     color:var(--text); padding:5px 9px; border-radius:8px; font-weight:600; white-space:nowrap; }
+  .act { position:absolute; z-index:7; right:74px; display:flex; flex-wrap:wrap; align-items:center; gap:4px 8px; padding:5px 8px;
+    background:rgba(27,30,46,.96); border:1px solid var(--amber); border-radius:9px; box-shadow:0 4px 14px rgba(0,0,0,.45); max-width:calc(100% - 100px); }
+  .act b { font-size:12px; } .act .m { color:var(--muted); } .act .r { color:var(--down); } .act .g { color:var(--up); }
+  .act button { padding:4px 10px; font-weight:600; border:1px solid var(--border); background:var(--panel2); color:var(--text); }
+  .act button.ok { background:var(--up); color:#06130f; border-color:var(--up); } .act button.no { color:var(--down); }
+  .act button:disabled { opacity:.5; cursor:default; }
   #empty { position:absolute; inset:0; display:none; align-items:center; justify-content:center; color:var(--muted); font-size:14px; }
 </style>
 </head>
@@ -57,6 +63,7 @@
     <div id="chart"></div>
     <div id="legend"></div>
     <div id="measure"></div>
+    <div id="acts"></div>
     <div id="empty">No bars stored for this symbol yet.</div>
   </div>
 </div>
@@ -218,6 +225,36 @@
             c.strokeRect(Math.min(xa, xb) * hr, Math.min(ya, yb) * vr, Math.abs(xb - xa) * hr, Math.abs(yb - ya) * vr);
           }
         }
+        // draggable entry / stop / target lines for proposals and open positions
+        for (const b of BOXES) {
+          const yE = yOf(b.entry), yS = yOf(b.edit.stop), yT = b.edit.target != null ? yOf(b.edit.target) : null;
+          if (yE == null || yS == null) continue;
+          // an open position starts at its entry bar; a proposal spans the whole chart so its lines are easy to grab
+          let x0 = b.t0 ? xOf(b.t0) : 0;
+          x0 = Math.max(x0 == null ? 0 : x0, 0);
+          const zx = b.t0 ? x0 : Math.max(xOf(times[times.length - 1]) || 0, 0);  // tinted zones begin at the latest bar
+          const x1 = W / hr;
+          c.setLineDash([]);
+          c.fillStyle = "rgba(239,83,80,.16)"; c.fillRect(zx * hr, Math.min(yE, yS) * vr, (x1 - zx) * hr, Math.abs(yS - yE) * vr);
+          if (yT != null) { c.fillStyle = "rgba(38,166,154,.16)"; c.fillRect(zx * hr, Math.min(yE, yT) * vr, (x1 - zx) * hr, Math.abs(yT - yE) * vr); }
+          const ln = (y, col, w, dash) => { c.strokeStyle = col; c.lineWidth = w * hr; c.setLineDash(dash ? [5 * hr, 4 * hr] : []);
+            c.beginPath(); c.moveTo(x0 * hr, y * vr); c.lineTo(x1 * hr, y * vr); c.stroke(); c.setLineDash([]); };
+          ln(yE, "#9aa3c7", 1, true);
+          ln(yS, "#ef5350", 2, false);
+          if (yT != null) ln(yT, "#26a69a", 2, false);
+          const tag = (y, txt, col) => { c.font = `${Math.round(11 * hr)}px sans-serif`; const w = c.measureText(txt).width + 12 * hr;
+            const x = Math.max(x0, 0) * hr + 8 * hr; c.fillStyle = col; c.fillRect(x, y * vr - 18 * vr, w, 17 * vr);
+            c.fillStyle = "#fff"; c.fillText(txt, x + 6 * hr, y * vr - 5 * vr); };
+          const m = boxMath(b);
+          tag(yS, `SL ${b.edit.stop.toFixed(2)}  −$${m.risk.toFixed(2)}`, "#c0392b");
+          if (yT != null) tag(yT, `TP ${b.edit.target.toFixed(2)}  +$${m.reward.toFixed(2)}  ${m.rr.toFixed(1)}R`, "#1e8e84");
+          tag(yE, `${b.kind === "pending" ? "PROPOSED" : "ENTRY"} ${b.direction.toUpperCase()} ×${b.qty}  @ ${b.entry.toFixed(2)}`, "#4a5075");
+          // grab handles
+          for (const [y, col] of [[yS, "#ef5350"], ...(yT != null ? [[yT, "#26a69a"]] : [])]) {
+            c.fillStyle = col; c.beginPath(); c.arc((x1 - 30) * hr, y * vr, 5 * hr, 0, 7); c.fill();
+            c.strokeStyle = "#fff"; c.lineWidth = 1.5 * hr; c.stroke();
+          }
+        }
         // pending first click marker
         if (state.pending) {
           const x = xOf(state.pending.t), y = yOf(state.pending.p);
@@ -237,6 +274,99 @@
   };
   candles.attachPrimitive(overlay);
   const redraw = () => { overlay._req && overlay._req(); };
+
+  // ---------- draggable stop / target (TradingView-style position tool) ----------
+  const LIVE = P.live || { pending: [], positions: [] };
+  const BOXES = [];
+  const q2 = (v) => Math.round(v * 100) / 100;
+  for (const p of LIVE.pending || []) if (p.entry && p.stop) BOXES.push({ kind: "pending", id: p.id, direction: p.direction, qty: p.qty, entry: p.entry, t0: null,
+    orig: { stop: p.stop, target: p.target }, edit: { stop: p.stop, target: p.target }, dirty: false, sent: false });
+  for (const p of LIVE.positions || []) if (p.entry && p.stop) BOXES.push({ kind: "position", id: p.id, direction: p.direction, qty: p.qty, entry: p.entry, t0: p.t0,
+    orig: { stop: p.stop, target: p.target }, edit: { stop: p.stop, target: p.target }, dirty: false, sent: !!p.updating });
+  const boxMath = (b) => {
+    const risk = Math.abs(b.entry - b.edit.stop) * b.qty;
+    const reward = b.edit.target != null ? Math.abs(b.edit.target - b.entry) * b.qty : 0;
+    return { risk, reward, rr: risk > 0 ? reward / risk : 0 };
+  };
+  const post = (a) => { try { window.parent.postMessage({ alphawave: a }, "*"); } catch (e) {} };
+  candles.applyOptions({ autoscaleInfoProvider: (orig) => {
+    const r = orig();
+    if (!r || !BOXES.length) return r;
+    let lo = r.priceRange.minValue, hi = r.priceRange.maxValue;
+    for (const b of BOXES) for (const v of [b.entry, b.edit.stop, b.edit.target]) if (v != null) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+    return { priceRange: { minValue: lo, maxValue: hi }, margins: r.margins };
+  } });
+
+  const actsEl = $("#acts");
+  function renderActs() {
+    actsEl.innerHTML = "";
+    BOXES.forEach((b, i) => {
+      const m = boxMath(b), el = document.createElement("div"); el.className = "act"; el.dataset.i = i;
+      el.style.top = (46 + i * 46) + "px";  // docked under the legend so it never covers the lines
+      const money = `<span class="r">−$${m.risk.toFixed(2)}</span> / <span class="g">+$${m.reward.toFixed(2)}</span> · ${m.rr.toFixed(1)}R`;
+      if (b.kind === "pending") {
+        el.innerHTML = `<b>${b.direction.toUpperCase()} ${P.symbol} ×${b.qty}</b><span class="m">drag SL / TP, then confirm</span>${money}` +
+          `<button class="ok" data-a="confirm" ${b.sent ? "disabled" : ""}>${b.sent ? "Sending…" : "✔ Confirm trade"}</button>` +
+          `<button class="no" data-a="reject" ${b.sent ? "disabled" : ""}>✖ Reject</button>` + (b.dirty && !b.sent ? `<button data-a="reset">↺ Reset</button>` : "");
+      } else if (b.sent) {
+        el.innerHTML = `<b>${b.direction.toUpperCase()} ${P.symbol}</b><span class="m">applying new levels at the broker…</span>`;
+      } else if (b.dirty) {
+        el.innerHTML = `<b>${b.direction.toUpperCase()} ${P.symbol} ×${b.qty}</b><span class="m">new levels</span>${money}` +
+          `<button class="ok" data-a="apply">✔ Apply to broker</button><button data-a="reset">↺ Reset</button>`;
+      } else {
+        el.innerHTML = `<b>${b.direction.toUpperCase()} ${P.symbol} ×${b.qty}</b><span class="m">drag the SL / TP line to change it</span>${money}`;
+      }
+      actsEl.appendChild(el);
+    });
+  }
+  actsEl.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-a]"); if (!btn) return;
+    const b = BOXES[+btn.closest(".act").dataset.i], a = btn.dataset.a;
+    if (a === "reset") { b.edit = { ...b.orig }; b.dirty = false; }
+    else if (a === "confirm") { b.sent = true; post({ type: "confirm_pending", id: b.id, stop: b.edit.stop, target: b.edit.target }); }
+    else if (a === "reject") { b.sent = true; post({ type: "reject_pending", id: b.id }); }
+    else if (a === "apply") { b.sent = true; post({ type: "modify_position", symbol: P.symbol, stop: b.edit.stop, target: b.edit.target }); }
+    renderActs(); redraw();
+  });
+  const chartEl = $("#chart");
+  let drag = null;
+  const yRel = (e) => e.clientY - chartEl.getBoundingClientRect().top;
+  function hit(e) {
+    const y = yRel(e);
+    for (const b of BOXES) {
+      if (b.sent) continue;
+      for (const w of ["stop", "target"]) {
+        const v = b.edit[w]; if (v == null) continue;
+        const py = yOf(v);
+        const bx = b.t0 ? xOf(b.t0) : 0;
+        if (py != null && Math.abs(py - y) <= 7 && e.clientX - chartEl.getBoundingClientRect().left >= (bx == null ? 0 : bx) - 10) return { b, w };
+      }
+    }
+    return null;
+  }
+  chartEl.addEventListener("mousedown", (e) => {
+    if (e.button !== 0 || state.tool !== "cursor") return;
+    const h = hit(e); if (!h) return;
+    drag = h; e.preventDefault(); e.stopPropagation();
+    chart.applyOptions({ handleScroll: false, handleScale: false });
+  }, true);
+  chartEl.addEventListener("mousemove", (e) => {
+    if (!drag) { chartEl.style.cursor = hit(e) ? "ns-resize" : ""; return; }
+    e.stopPropagation();
+    const px = candles.coordinateToPrice(yRel(e)); if (px == null) return;
+    const b = drag.b, long = b.direction === "long", tick = 0.01;
+    let v = q2(px);
+    if (drag.w === "stop") v = long ? Math.min(v, q2(b.entry - tick)) : Math.max(v, q2(b.entry + tick));
+    else v = long ? Math.max(v, q2(b.entry + tick)) : Math.min(v, q2(b.entry - tick));
+    b.edit[drag.w] = v; b.dirty = b.edit.stop !== b.orig.stop || b.edit.target !== b.orig.target;
+    redraw(); renderActs();
+  }, true);
+  window.addEventListener("mouseup", () => {
+    if (!drag) return;
+    drag = null; chart.applyOptions({ handleScroll: true, handleScale: true }); chartEl.style.cursor = ""; renderActs(); redraw();
+  });
+  chart.timeScale().subscribeVisibleLogicalRangeChange(() => { if (BOXES.length) renderActs(); });
+  window.__alphawave = { boxes: BOXES, renderActs, y: (p) => yOf(p), price: (y) => candles.coordinateToPrice(y) };
 
   // ---------- markers ----------
   let textOn = true;   // marker captions only when zoomed in enough to read them
@@ -389,6 +519,8 @@
   applyToggles();
   setTool("cursor");
   setTF(prefs.tf in P.datasets ? prefs.tf : "15m", false);
+  renderActs();
+  setTimeout(() => { renderActs(); redraw(); }, 300);
 })();
 </script>
 </body>

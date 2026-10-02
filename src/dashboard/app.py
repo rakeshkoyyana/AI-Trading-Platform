@@ -247,7 +247,7 @@ def trade_control():
         for p in pend:
             left_s = max(int((p.expires_at - utc_now()).total_seconds()), 0)
             prob_s = f" · P(win) {p.probability:.0%}" if p.probability is not None else ""
-            stop_s = f"stop {p.stop_loss:.2f}" if p.stop_loss else "no stop"
+            stop_s = (f"stop {p.stop_loss:.2f}" if p.stop_loss else "no stop") + (f" · target {p.take_profit:.2f}" if p.take_profit else "")
             c1, c2, c3 = st.columns([4, 1, 1])
             c1.markdown(f"{'🟢' if p.direction == 'long' else '🔴'} **{p.direction.upper()} {p.symbol}** × {p.qty} @ ~{p.entry:.2f} · "
                         f"{stop_s}{prob_s} · expires in {left_s // 60}:{left_s % 60:02d}")

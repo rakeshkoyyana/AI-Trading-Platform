@@ -308,7 +308,11 @@ def chart_levels(engine, symbol: str, now: datetime | None = None) -> dict:
     waiting = {m.symbol for m in list_modify_requests(engine, "pending")}
     with session_scope(engine) as sx:
         rows = list(sx.execute(select(Trade).where(Trade.symbol == symbol, Trade.status.in_(["open", "filled"]))).scalars())
+        rr = get_settings().target_rr
         pos = [dict(id=t.id, direction=t.direction, qty=t.qty, entry=t.entry_price, stop=t.stop_loss, target=t.take_profit,
+                    # a trade opened without a take-profit order still shows where a 1:RR target would sit (not an order)
+                    target_est=(None if t.take_profit or not t.stop_loss else
+                                round(t.entry_price + (1 if t.direction == "long" else -1) * rr * abs(t.entry_price - t.stop_loss), 2)),
                     t0=int(t.entry_time.replace(tzinfo=timezone.utc).timestamp()) if t.entry_time else None,
                     updating=symbol in waiting) for t in rows if t.entry_price]
     return dict(pending=pend, positions=pos)

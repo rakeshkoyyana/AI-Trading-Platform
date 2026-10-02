@@ -248,6 +248,10 @@
           const m = boxMath(b);
           tag(yS, `SL ${b.edit.stop.toFixed(2)}  −$${m.risk.toFixed(2)}`, "#c0392b");
           if (yT != null) tag(yT, `TP ${b.edit.target.toFixed(2)}  +$${m.reward.toFixed(2)}  ${m.rr.toFixed(1)}R`, "#1e8e84");
+          if (yT == null && b.est != null) {   // no take-profit order exists: show where a 1:2 target would be (dashed, not draggable)
+            const yX = yOf(b.est);
+            if (yX != null) { ln(yX, "#26a69a", 1.5, true); tag(yX, `TP est. ${b.est.toFixed(2)}  (no order)`, "#2d6f68"); }
+          }
           tag(yE, `${b.kind === "pending" ? "PROPOSED" : "ENTRY"} ${b.direction.toUpperCase()} ×${b.qty}  @ ${b.entry.toFixed(2)}`, "#4a5075");
           // grab handles
           for (const [y, col] of [[yS, "#ef5350"], ...(yT != null ? [[yT, "#26a69a"]] : [])]) {
@@ -282,7 +286,7 @@
   for (const p of LIVE.pending || []) if (p.entry && p.stop) BOXES.push({ kind: "pending", id: p.id, direction: p.direction, qty: p.qty, entry: p.entry, t0: null,
     orig: { stop: p.stop, target: p.target }, edit: { stop: p.stop, target: p.target }, dirty: false, sent: false });
   for (const p of LIVE.positions || []) if (p.entry && p.stop) BOXES.push({ kind: "position", id: p.id, direction: p.direction, qty: p.qty, entry: p.entry, t0: p.t0,
-    orig: { stop: p.stop, target: p.target }, edit: { stop: p.stop, target: p.target }, dirty: false, sent: !!p.updating });
+    orig: { stop: p.stop, target: p.target }, edit: { stop: p.stop, target: p.target }, est: p.target_est || null, dirty: false, sent: !!p.updating });
   const boxMath = (b) => {
     const risk = Math.abs(b.entry - b.edit.stop) * b.qty;
     const reward = b.edit.target != null ? Math.abs(b.edit.target - b.entry) * b.qty : 0;
@@ -293,7 +297,7 @@
     const r = orig();
     if (!r || !BOXES.length) return r;
     let lo = r.priceRange.minValue, hi = r.priceRange.maxValue;
-    for (const b of BOXES) for (const v of [b.entry, b.edit.stop, b.edit.target]) if (v != null) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+    for (const b of BOXES) for (const v of [b.entry, b.edit.stop, b.edit.target, b.est]) if (v != null) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
     return { priceRange: { minValue: lo, maxValue: hi }, margins: r.margins };
   } });
 

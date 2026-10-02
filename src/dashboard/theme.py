@@ -21,6 +21,8 @@ h1,h2,h3,h4 {{ letter-spacing:.2px; }}
 /* top bar */
 .tp-top {{ display:flex; align-items:center; gap:14px; padding:10px 14px; background:{PANEL}; border:1px solid {BORDER};
   border-radius:14px; margin-bottom:8px; flex-wrap:wrap; }}
+.tp-brand {{ text-decoration:none !important; color:inherit; cursor:pointer; display:block; }}
+[data-testid="stMain"], section.main, .stMain {{ scroll-behavior:smooth; }}
 .tp-logo {{ font-weight:800; font-size:17px; letter-spacing:.4px; }}
 .tp-logo span {{ color:{ACCENT}; }}
 .pill {{ display:inline-flex; align-items:center; gap:6px; padding:3px 10px; border-radius:999px; font-size:11.5px; font-weight:600;
@@ -160,7 +162,7 @@ def pill(text, kind="", live=False) -> str:
 
 def topbar(mode_live: bool, market_open: bool, next_open: str | None, kill: bool, equity: float, as_of: str) -> str:
     return (
-        '<div class="tp-top"><div class="tp-logo">' + lockup_img(28) + '</div>'
+        '<div class="tp-top"><a class="tp-brand" href="#about-alphawave" title="About AlphaWave"><div class="tp-logo">' + lockup_img(28) + '</div></a>'
         + pill("LIVE TRADING" if mode_live else "PAPER", "down" if mode_live else "up", live=True)
         + pill("Market open" if market_open else f"Market closed{' · opens ' + next_open if next_open else ''}", "up" if market_open else "amber", live=market_open)
         + (pill("KILL SWITCH ON", "down") if kill else "")

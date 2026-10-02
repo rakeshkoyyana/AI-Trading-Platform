@@ -1,0 +1,798 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>About AlphaWave</title>
+<style>
+  :root {
+    --deep:#0f111c; --panel:#171a2a; --panel2:#1e2236; --edge:#2a2e45; --text:#e8eaf4; --mute:#8d93b0;
+    --wave:#6c8cff; --up:#26a69a; --down:#ef5350; --lamp:#f5b041;
+    --serif:"Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,serif;
+    --sans:-apple-system,BlinkMacSystemFont,"Inter","Segoe UI",Roboto,sans-serif;
+  }
+  * { box-sizing:border-box; }
+  html,body { margin:0; background:var(--deep); color:var(--text); font:14px/1.55 var(--sans); }
+  button { font:inherit; color:inherit; cursor:pointer; }
+  button:focus-visible, input:focus-visible, select:focus-visible { outline:2px solid var(--wave); outline-offset:2px; }
+  a { color:var(--wave); }
+  #root { border:1px solid var(--edge); border-radius:16px; overflow:hidden; background:var(--deep); }
+
+  /* ---------- hero ---------- */
+  .hero { position:relative; height:290px; background:radial-gradient(120% 140% at 15% 0%, #1b2040 0%, var(--deep) 60%); border-bottom:1px solid var(--edge); }
+  #hw { position:absolute; inset:0; width:100%; height:100%; }
+  .hero-copy { position:absolute; left:32px; top:34px; max-width:640px; pointer-events:none; }
+  .hero h1 { margin:0; font:600 64px/1 var(--serif); letter-spacing:-1.5px; color:#fff; }
+  .hero p { margin:12px 0 0; font:italic 19px/1.4 var(--serif); color:#c9cde2; max-width:34ch; }
+  .hero small { position:absolute; left:32px; bottom:16px; color:var(--mute); font-size:12px; }
+
+  /* ---------- shell ---------- */
+  .shell { display:grid; grid-template-columns:200px 1fr; min-height:620px; }
+  .rail { padding:18px 12px; border-right:1px solid var(--edge); background:var(--panel); display:flex; flex-direction:column; gap:4px; }
+  .rail button { text-align:left; background:none; border:0; padding:10px 12px; border-radius:10px; color:var(--mute); font-size:14px; }
+  .rail button:hover { color:var(--text); background:var(--panel2); }
+  .rail button.on { color:#fff; background:var(--panel2); box-shadow:inset 3px 0 0 var(--lamp); }
+  .rail .sep { height:1px; background:var(--edge); margin:10px 6px; }
+  main { padding:28px 34px 36px; min-width:0; }
+  section.ch { display:none; }
+  section.ch.on { display:block; }
+  h2 { margin:0 0 6px; font:600 30px/1.15 var(--serif); letter-spacing:-.4px; }
+  h3 { margin:26px 0 8px; font:600 17px/1.3 var(--serif); }
+  .lede { font:18px/1.55 var(--serif); color:#c9cde2; max-width:62ch; margin:0 0 20px; }
+  p.t { max-width:70ch; margin:0 0 12px; color:#cfd3e6; }
+  .muted { color:var(--mute); }
+  .row { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
+  .btn { background:var(--panel2); border:1px solid var(--edge); border-radius:9px; padding:7px 13px; }
+  .btn:hover { border-color:var(--wave); }
+  .btn.primary { background:var(--wave); border-color:var(--wave); color:#0a0d1c; font-weight:600; }
+  .btn.on { border-color:var(--lamp); color:var(--lamp); }
+  .chip { display:inline-flex; align-items:center; gap:6px; padding:5px 11px; border:1px solid var(--edge); border-radius:99px; background:var(--panel2); cursor:pointer; user-select:none; }
+  .chip.on { border-color:var(--up); color:#d6fff8; background:rgba(38,166,154,.16); }
+  .chip.lock { cursor:default; opacity:.85; }
+  .panelbox { background:var(--panel); border:1px solid var(--edge); border-radius:14px; padding:16px 18px; }
+
+  /* ---------- story ---------- */
+  .story { max-width:700px; }
+  .story .chap { display:grid; grid-template-columns:1fr; gap:6px; margin:0 0 34px; }
+  .story .chap h3 { margin:0; font:600 22px/1.25 var(--serif); color:#fff; }
+  .story .chap p { margin:0 0 10px; font:17px/1.7 var(--serif); color:#d6d9ea; max-width:62ch; }
+  .story .pull { font:italic 21px/1.5 var(--serif); color:var(--lamp); border-left:3px solid var(--lamp); padding:2px 0 2px 16px; margin:18px 0; max-width:34ch; }
+  .ledger { margin:16px 0 6px; border:1px solid var(--edge); border-radius:12px; background:var(--panel); overflow:hidden; max-width:520px; }
+  .ledger table { width:100%; border-collapse:collapse; font-size:13.5px; }
+  .ledger th { text-align:left; color:var(--mute); font-weight:500; padding:9px 14px; border-bottom:1px solid var(--edge); }
+  .ledger td { padding:9px 14px; border-bottom:1px solid rgba(42,46,69,.6); }
+  .ledger tr:last-child td { border-bottom:0; }
+  .ledger .up { color:var(--up); } .ledger .note { color:var(--mute); padding:10px 14px; font-size:12.5px; border-top:1px solid var(--edge); }
+  .pledge { margin:10px 0 0; padding:0; list-style:none; font:17px/1.6 var(--serif); }
+  .pledge li { padding:5px 0 5px 22px; position:relative; }
+  .pledge li::before { content:""; position:absolute; left:2px; top:15px; width:9px; height:9px; border-radius:50%; background:var(--lamp); }
+  .ill { width:100%; max-width:560px; height:auto; margin:6px 0 14px; display:block; }
+
+  /* ---------- idea / lab ---------- */
+  .lab { margin-top:6px; }
+  #labcv { width:100%; height:380px; display:block; border-radius:12px; background:#12141f; border:1px solid var(--edge); cursor:crosshair; }
+  .labbar { display:flex; flex-wrap:wrap; gap:8px 12px; align-items:center; margin:10px 0; }
+  .labbar label { display:flex; align-items:center; gap:8px; color:var(--mute); }
+  input[type=range] { accent-color:var(--wave); }
+  .readout { margin-top:8px; padding:12px 14px; border-radius:12px; background:var(--panel); border:1px solid var(--edge); min-height:56px; }
+  .readout b { color:#fff; }
+  .minis { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px; margin-top:8px; }
+  .mini { background:var(--panel); border:1px solid var(--edge); border-radius:12px; padding:10px 12px 12px; }
+  .mini svg { width:100%; height:92px; display:block; }
+  .mini b { display:block; margin:4px 0 2px; }
+  .mini span { color:var(--mute); font-size:12.5px; }
+
+  /* ---------- machine ---------- */
+  .mapwrap { overflow-x:auto; border:1px solid var(--edge); border-radius:14px; background:#0d0f1a; }
+  #map { display:block; width:100%; min-width:820px; height:auto; }
+  .node rect.b { fill:#171b30; stroke:#33395a; stroke-width:1.2; transition:stroke .15s, fill .15s; }
+  .node { cursor:pointer; }
+  .node:hover rect.b, .node.sel rect.b { stroke:var(--wave); }
+  .node.lit rect.b { stroke:var(--lamp); fill:#262236; }
+  .node.stop rect.b { stroke:var(--down); fill:#2c1c26; }
+  .node.shadow rect.b { stroke-dasharray:5 4; }
+  .node.human rect.b { stroke:var(--lamp); }
+  .node text.n { fill:#f1f3fb; font:600 13px var(--sans); }
+  .node text.s { fill:#8d93b0; font:11px var(--sans); }
+  .edge { fill:none; stroke:#3a4166; stroke-width:1.6; }
+  .edge.soft { stroke-dasharray:3 5; stroke:#2c3250; }
+  .edge.adv { stroke-dasharray:6 4; }
+  .edge.hot { stroke:var(--lamp); stroke-width:2.4; }
+  .elab { fill:#8d93b0; font:11px var(--sans); }
+  .band text { fill:#8d93b0; font:11.5px var(--sans); }
+  #caption { margin:12px 0 4px; min-height:48px; padding:12px 14px; background:var(--panel); border:1px solid var(--edge); border-radius:12px; }
+  #detail { margin-top:10px; display:none; }
+  #detail h4 { margin:0 0 4px; font:600 18px var(--serif); }
+  #detail dl { margin:10px 0 0; display:grid; grid-template-columns:130px 1fr; gap:6px 14px; }
+  #detail dt { color:var(--mute); } #detail dd { margin:0; }
+  code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12.5px; color:#bcd0ff; background:rgba(108,140,255,.12); padding:1px 6px; border-radius:5px; }
+
+  /* ---------- trade life ---------- */
+  .life { display:grid; grid-template-columns:minmax(210px,260px) 1fr; gap:18px; align-items:start; }
+  .steps { list-style:none; margin:0; padding:0; position:relative; }
+  .steps::before { content:""; position:absolute; left:14px; top:14px; bottom:14px; width:2px; background:var(--edge); }
+  .steps li { position:relative; padding:5px 0 5px 40px; cursor:pointer; color:var(--mute); }
+  .steps li i { position:absolute; left:2px; top:3px; width:26px; height:26px; border-radius:50%; background:var(--panel2); border:2px solid var(--edge); font:600 12px/22px var(--sans); text-align:center; font-style:normal; color:var(--mute); }
+  .steps li.done i { border-color:var(--up); color:var(--up); }
+  .steps li.on { color:#fff; } .steps li.on i { background:var(--lamp); border-color:var(--lamp); color:#171a2a; }
+  .stepcard h4 { margin:0 0 6px; font:600 22px/1.2 var(--serif); }
+  .stepcard dl { display:grid; grid-template-columns:120px 1fr; gap:8px 14px; margin:14px 0 0; }
+  .stepcard dt { color:var(--mute); } .stepcard dd { margin:0; }
+  .calc { margin-top:22px; }
+  .calc .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:10px; margin:10px 0; }
+  .calc label { display:flex; flex-direction:column; gap:4px; color:var(--mute); font-size:12.5px; }
+  .calc input, .calc select { background:#12141f; border:1px solid var(--edge); border-radius:8px; color:var(--text); padding:7px 9px; font:inherit; }
+  #calcsvg { width:100%; height:170px; display:block; margin-top:8px; }
+  .kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:10px; }
+  .kpi { background:var(--panel2); border-radius:10px; padding:9px 12px; }
+  .kpi small { color:var(--mute); display:block; } .kpi b { font:600 20px var(--serif); }
+
+  /* ---------- guardrails ---------- */
+  .gates { display:flex; flex-wrap:wrap; gap:8px; margin:6px 0 12px; }
+  .gate { padding:8px 13px; border:1px solid var(--edge); border-radius:10px; background:var(--panel2); }
+  .gate.on { border-color:var(--lamp); background:rgba(245,176,65,.12); color:#fff; }
+  #gatecard { min-height:96px; }
+  .modes { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:12px; margin:8px 0; }
+  .modes .m { border:1px solid var(--edge); border-radius:12px; padding:12px 14px; background:var(--panel); }
+  .modes .m b { font:600 18px var(--serif); display:block; margin-bottom:4px; }
+  .modes .m.off b { color:var(--mute); } .modes .m.ask b { color:var(--lamp); } .modes .m.auto b { color:var(--up); }
+  .twocol { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:14px; }
+
+  /* ---------- road ---------- */
+  .track { position:relative; margin:14px 0 4px; }
+  .bar { height:14px; border-radius:99px; background:var(--panel2); border:1px solid var(--edge); position:relative; overflow:hidden; }
+  .bar i { position:absolute; left:0; top:0; bottom:0; background:linear-gradient(90deg,var(--wave),var(--up)); border-radius:99px; }
+  .ticks { position:relative; height:34px; margin-top:4px; color:var(--mute); font-size:12px; }
+  .ticks span { position:absolute; transform:translateX(-50%); white-space:nowrap; }
+  .phases { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:12px; margin-top:12px; }
+  .phase { border:1px solid var(--edge); border-radius:14px; padding:14px 16px; background:var(--panel); }
+  .phase.now { border-color:var(--lamp); box-shadow:0 0 0 3px rgba(245,176,65,.08); }
+  .phase h4 { margin:0 0 6px; font:600 18px var(--serif); }
+  .phase ul { margin:0; padding-left:18px; color:#cfd3e6; } .phase li { margin:3px 0; }
+  .fine { margin:26px 0 0; padding-top:14px; border-top:1px solid var(--edge); color:var(--mute); font-size:12.5px; max-width:80ch; }
+
+  @media (max-width:760px) {
+    .shell { grid-template-columns:1fr; }
+    .rail { flex-direction:row; overflow-x:auto; border-right:0; border-bottom:1px solid var(--edge); padding:10px; }
+    .rail .sep { display:none; } .rail button { white-space:nowrap; }
+    main { padding:20px 16px 28px; }
+    .hero h1 { font-size:44px; } .hero p { font-size:16px; }
+    .life { grid-template-columns:1fr; } #detail dl, .stepcard dl { grid-template-columns:1fr; }
+  }
+  @media (prefers-reduced-motion:reduce) { * { transition:none !important; } }
+</style>
+</head>
+<body>
+<div id="root">
+  <header class="hero">
+    <canvas id="hw" aria-hidden="true"></canvas>
+    <div class="hero-copy">
+      <h1>AlphaWave</h1>
+      <p>A trading desk for one person, built in the evenings, that has to explain every decision it makes.</p>
+    </div>
+    <small>Paper trading since October 2, 2026 · built on free tiers · move your pointer across the wave</small>
+  </header>
+
+  <div class="shell">
+    <nav class="rail" aria-label="Chapters">
+      <button data-ch="story" class="on">The story</button>
+      <button data-ch="idea">The idea</button>
+      <button data-ch="machine">The machine</button>
+      <button data-ch="life">One trade's life</button>
+      <button data-ch="guard">Guardrails</button>
+      <button data-ch="road">The road ahead</button>
+    </nav>
+
+    <main>
+      <!-- ===================================================== STORY -->
+      <section class="ch on" id="ch-story">
+        <h2>The kitchen-table desk</h2>
+        <p class="lede">Every big trading firm has a floor, a research team and a budget. This one has a laptop, a free API key and a few hours after dinner.</p>
+        <div class="story">
+          <div class="chap">
+            <h3>A chart on the kitchen table</h3>
+            <svg class="ill" viewBox="0 0 560 120" role="img" aria-label="A lamp lighting a laptop showing a candlestick chart">
+              <path d="M0 104 H560" stroke="#2a2e45" stroke-width="2"/>
+              <path d="M60 104 V50 Q60 30 90 30 H110" fill="none" stroke="#f5b041" stroke-width="3" stroke-linecap="round"/>
+              <path d="M104 20 L140 20 L132 44 L112 44 Z" fill="#f5b041" opacity=".9"/>
+              <path d="M112 44 L50 104 L170 104 Z" fill="#f5b041" opacity=".07"/>
+              <rect x="230" y="40" width="190" height="62" rx="6" fill="#171a2a" stroke="#33395a" stroke-width="2"/>
+              <path d="M214 104 H436 L426 98 H224 Z" fill="#2a2e45"/>
+              <g stroke-width="2" stroke-linecap="round"><path d="M256 82 V58 M256 68 h0" stroke="#26a69a"/><path d="M276 84 V62" stroke="#ef5350"/><path d="M296 76 V52" stroke="#26a69a"/><path d="M316 70 V56" stroke="#ef5350"/><path d="M336 74 V50" stroke="#26a69a"/><path d="M356 62 V48" stroke="#26a69a"/><path d="M376 66 V52" stroke="#ef5350"/></g>
+              <path d="M246 86 C280 78 300 70 326 60 S372 52 402 50" fill="none" stroke="#6c8cff" stroke-width="2"/>
+              <path d="M470 104 V92 Q470 84 480 84 H500 Q510 84 510 92 V104 Z" fill="#2a2e45"/><path d="M510 90 q14 0 14 8 t-14 6" fill="none" stroke="#2a2e45" stroke-width="3"/>
+              <path d="M484 76 q-4 -8 2 -14 M494 76 q-4 -8 2 -14" fill="none" stroke="#8d93b0" stroke-width="2" stroke-linecap="round" opacity=".6"/>
+            </svg>
+            <p>Most of AlphaWave was written between seven and eleven at night, after the real job. The day job was data engineering: moving information between systems, making it trustworthy, making it boring in the best sense. The evenings belonged to a TradingView chart that never stopped moving.</p>
+            <p>There was no desk, no quant team, no seed round. There was one person who suspected that the two halves of his life belonged together: that the discipline he used on pipelines could be pointed at a market.</p>
+          </div>
+
+          <div class="chap">
+            <h3>A dream with a budget</h3>
+            <p>It is a very middle-class kind of dream, and an honest one. Not a lottery ticket. Not a screenshot of a lucky week. The dream is that careful engineering, patience and a few good rules can turn ordinary evenings into an edge, and that someone without a trust fund or a terminal subscription can build the thing properly, by hand, and own it.</p>
+            <p>So the rules of the project were set before the first line of code: use only free tiers, keep every dollar out of the experiment, and treat money that could be lost as money that must never be risked before the machine has earned it.</p>
+            <div class="pull">Paper first. Free tools. Explain every decision.</div>
+          </div>
+
+          <div class="chap">
+            <h3>Teaching the rules to a machine</h3>
+            <p>The strategy started as a Pine Script on TradingView: a trend filter, a momentum band and a volume spike, called the triple confirmation, layered with Smart Money Concepts for context. It drew arrows on a chart. It could not place an order, keep a diary, or tell you why it stayed out of a trade.</p>
+            <p>So the script became a platform. The logic was ported to Python, checked against the chart, then wrapped with a database, a scheduler, a risk engine and a broker. One rule was never negotiable: if the system cannot explain a decision, it does not get to make it.</p>
+          </div>
+
+          <div class="chap">
+            <h3>Earning trust, one bug at a time</h3>
+            <p>The paper run began on October 2, 2026. It found its first real problems the same day. A manual close recorded no exit price. A routine check then booked the trade at its entry price. A chart that needed a refresh to show the truth. Each one was fixed before the market closed, which is the entire point of practising with play money.</p>
+            <div class="ledger">
+              <table>
+                <tr><th>Day one, paper account</th><th>Result</th></tr>
+                <tr><td>ASTS long, 86 shares, 57.75 to 58.84</td><td class="up">+$93.74</td></tr>
+                <tr><td>NVDA short, 21 shares, 234.54 to 234.08</td><td class="up">+$9.67</td></tr>
+                <tr><td>Bugs found by real trades, fixed that day</td><td>3</td></tr>
+                <tr><td colspan="2" class="note">Two trades is a story, not a statistic. The next two to four weeks decide whether there is an edge.</td></tr>
+              </table>
+            </div>
+          </div>
+
+          <div class="chap">
+            <h3>What success looks like</h3>
+            <p>Success is not a green number on day one. It is a system whose every line its builder understands, that survives a month of honest data, and that is allowed to risk real money only after the evidence says it has earned it. If the numbers say no, AlphaWave still did its job: it told the truth cheaply.</p>
+            <p>And if they say yes, a person with a laptop and a lamp built something that belongs to him.</p>
+            <ul class="pledge">
+              <li>Paper until the evidence says otherwise.</li>
+              <li>Nothing runs that cannot explain itself.</li>
+              <li>Every loss stays in the log.</li>
+              <li>The machine proposes; the person decides, until trust is earned.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===================================================== IDEA -->
+      <section class="ch" id="ch-idea">
+        <h2>The idea in one picture</h2>
+        <p class="lede">A trade needs three things to agree, in a place on the chart where the odds are better than the crowd's.</p>
+        <p class="t"><b>Trend:</b> the 9-bar average sits above the 21-bar average for a long, below it for a short. <b>Momentum:</b> RSI is between 50 and 70 for a long (30 to 50 for a short), so the move has room left. <b>Volume:</b> the bar trades more than 1.2 times its 20-bar average, so someone meaningful is participating. When all three agree on a closed 15-minute bar, there is a signal. The order goes in at the next bar's open.</p>
+        <h3>Signal lab</h3>
+        <p class="t muted">Invented prices with no edge built in, so the lab shows mechanics, not performance. Turn conditions off and watch what the signal count does. Click a triangle to see how that trade would have played out with a 1:2 target.</p>
+        <div class="lab">
+          <div class="labbar">
+            <button class="btn primary" id="newmkt">New market</button>
+            <span class="chip lock" title="The trend sets the direction, so it is always required">Trend (always)</span>
+            <span class="chip on" id="reqRsi" role="switch" aria-checked="true" tabindex="0">Momentum band</span>
+            <span class="chip on" id="reqVol" role="switch" aria-checked="true" tabindex="0">Volume spike</span>
+            <label>Volume multiple <input type="range" id="volx" min="1" max="2.2" step="0.1" value="1.2"><b id="volxv">1.2×</b></label>
+            <button class="btn" id="prevsig">Previous signal</button><button class="btn" id="nextsig">Next signal</button>
+          </div>
+          <canvas id="labcv"></canvas>
+          <div class="readout" id="labread">Click a signal marker.</div>
+        </div>
+        <h3>Smart Money Concepts: where on the chart</h3>
+        <p class="t">The three confirmations say when. Structure says where. These are the four ideas AlphaWave reads from price, and the engine uses them to place stops and judge whether a signal is in a good neighbourhood.</p>
+        <div class="minis" id="minis"></div>
+      </section>
+
+      <!-- ===================================================== MACHINE -->
+      <section class="ch" id="ch-machine">
+        <h2>The machine</h2>
+        <p class="lede">Follow a signal from market data to a filled order. Choose what happens to it, then watch where it can be stopped.</p>
+        <div class="labbar">
+          <select id="scn" class="btn" aria-label="Scenario">
+            <option value="ask">Clean signal, Ask mode, you approve</option>
+            <option value="auto">Clean signal, Auto mode</option>
+            <option value="gate">Blocked by a safety gate</option>
+            <option value="reject">You reject the proposal</option>
+          </select>
+          <button class="btn primary" id="fire">Send a signal</button>
+          <span class="muted">Click any box for what it does, where the code lives and whether it can stop a trade.</span>
+        </div>
+        <div class="mapwrap"><svg id="map" viewBox="0 0 1000 650" role="img" aria-label="AlphaWave architecture map"></svg></div>
+        <div id="caption" aria-live="polite">Pick a scenario and send a signal.</div>
+        <div id="detail" class="panelbox"></div>
+      </section>
+
+      <!-- ===================================================== LIFE -->
+      <section class="ch" id="ch-life">
+        <h2>One trade's life</h2>
+        <p class="lede">Eleven steps between a bar closing and a trade being booked. Pick a step.</p>
+        <div class="life">
+          <ol class="steps" id="steps"></ol>
+          <div class="panelbox stepcard" id="stepcard"></div>
+        </div>
+        <div class="panelbox calc">
+          <h3 style="margin-top:0">Position size and 1:2 target</h3>
+          <p class="t muted">The same arithmetic the engine uses: risk a fixed share of equity, cap the position, and set the target at twice the stop distance.</p>
+          <div class="row"><button class="btn" id="preset">Load the ASTS trade from October 2</button></div>
+          <div class="grid">
+            <label>Direction<select id="cDir"><option>long</option><option>short</option></select></label>
+            <label>Equity ($)<input id="cEq" type="number" value="100000" step="1000"></label>
+            <label>Risk per trade (%)<input id="cRisk" type="number" value="0.5" step="0.1"></label>
+            <label>Entry price<input id="cEntry" type="number" value="100" step="0.01"></label>
+            <label>Stop price<input id="cStop" type="number" value="98" step="0.01"></label>
+          </div>
+          <div class="kpis" id="ckpis"></div>
+          <svg id="calcsvg" viewBox="0 0 700 170" preserveAspectRatio="none" aria-hidden="true"></svg>
+        </div>
+      </section>
+
+      <!-- ===================================================== GUARDRAILS -->
+      <section class="ch" id="ch-guard">
+        <h2>Guardrails</h2>
+        <p class="lede">The machine is allowed to be wrong. It is not allowed to be reckless. Safety is layered, so one failure never decides the outcome.</p>
+        <h3>Gates every entry must pass</h3>
+        <div class="gates" id="gates"></div>
+        <div class="panelbox" id="gatecard"></div>
+        <h3>You choose how much the machine may do, per ticker</h3>
+        <div class="modes">
+          <div class="m off"><b>Off</b>Never opens a position in this ticker. Existing positions are still managed and closed.</div>
+          <div class="m ask"><b>Ask</b>A qualifying signal becomes a proposal with a banner and chime. Drag the stop and target, then confirm or reject. Proposals expire after 10 minutes.</div>
+          <div class="m auto"><b>Auto</b>A qualifying signal goes straight to the broker. Every gate and limit still applies.</div>
+        </div>
+        <h3>What keeps working after the order is sent</h3>
+        <div class="twocol">
+          <div class="panelbox"><b>The stop lives at the broker.</b><p class="t muted" style="margin:6px 0 0">The stop and the 1:2 target are sent with the entry and rest at Alpaca. They trigger and fill there, even if this app or your computer stops. The scheduler books the result every 30 seconds and warns once if a position ever has no resting stop.</p></div>
+          <div class="panelbox"><b>Your edits are checked twice.</b><p class="t muted" style="margin:6px 0 0">Dragged levels must stay on the losing side of the price, within the maximum stop width, and a stop can be widened to at most twice its original distance. The scheduler re-checks against the live price before it touches an order.</p></div>
+          <div class="panelbox"><b>Close and flatten.</b><p class="t muted" style="margin:6px 0 0">A Close button needs a confirm click, and a request the scheduler does not pick up within two minutes expires. Everything is flattened before the closing bell. A kill switch blocks every new order immediately.</p></div>
+          <div class="panelbox"><b>Experts in the shadows.</b><p class="t muted" style="margin:6px 0 0">The ML filter and a seven-voter rule council score every signal and log their opinion next to what the engine did. They cannot veto anything yet. After two to four weeks of paper trading the logs show whether either one deserves a vote.</p></div>
+        </div>
+      </section>
+
+      <!-- ===================================================== ROAD -->
+      <section class="ch" id="ch-road">
+        <h2>The road ahead</h2>
+        <p class="lede">The paper run is the experiment. Nothing gets promoted to real money, or even to a vote, until the data says so.</p>
+        <div class="panelbox">
+          <b>Paper run</b> <span class="muted">started October 2, 2026</span>
+          <div class="track"><div class="bar"><i id="prog"></i></div>
+            <div class="ticks" id="ticks"></div></div>
+          <div id="progtxt" class="muted"></div>
+        </div>
+        <div class="phases">
+          <div class="phase"><h4>Built</h4><ul>
+            <li>SMC and triple-confirmation logic ported from Pine to Python</li>
+            <li>Data from Alpaca with a real-time estimate for the live bar</li>
+            <li>Decision engine with risk gates, sizing and a written reason for every call</li>
+            <li>Off, Ask and Auto per ticker, with banner and chime alerts</li>
+            <li>Stop and 1:2 target at the broker, plus the Pine exits</li>
+            <li>Draggable stop and target lines, Close button, live-updating dashboard</li>
+            <li>Shadow ML filter and shadow council, logged and graded</li>
+          </ul></div>
+          <div class="phase now"><h4>Now</h4><ul>
+            <li>Two to four weeks of paper trading</li>
+            <li>Compare signals with the same chart on TradingView to find anything missed</li>
+            <li>Collect shadow votes next to real outcomes</li>
+            <li>Keep the Mac awake during market hours</li>
+          </ul></div>
+          <div class="phase"><h4>Next</h4><ul>
+            <li>Score the council and the ML filter against actual results</li>
+            <li>Retrain the ML filter on the exits the strategy really uses</li>
+            <li>Decide what earns a vote, using the paper log</li>
+            <li>Review win rate, average R, drawdown and missed signals</li>
+          </ul></div>
+          <div class="phase"><h4>Later, if it earns it</h4><ul>
+            <li>An always-on host so it runs while the laptop sleeps</li>
+            <li>Phone alerts beyond Discord</li>
+            <li>An AI analyst council, when there is budget for it</li>
+            <li>Small real-money trading, only after the paper numbers hold up</li>
+          </ul></div>
+        </div>
+        <p class="fine">AlphaWave is a personal research project running on a paper-trading account. Past or simulated results do not predict future results, nothing here is financial advice, and the illustrations on this page use invented data.</p>
+      </section>
+    </main>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  const $ = (s, r) => (r || document).querySelector(s);
+  const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
+  const reduce = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const NS = "http://www.w3.org/2000/svg";
+  const svgEl = (tag, attrs, parent) => { const e = document.createElementNS(NS, tag); for (const k in (attrs || {})) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; };
+
+  /* ---- tell the host page how tall we are (the dashboard resizes the frame) ---- */
+  let lastH = 0;
+  function reportHeight() {
+    const h = Math.ceil(document.documentElement.getBoundingClientRect().height) + 4;
+    if (Math.abs(h - lastH) > 2) { lastH = h; try { window.parent.postMessage({ alphawave_height: h }, "*"); } catch (e) {} }
+  }
+  if (window.ResizeObserver) new ResizeObserver(reportHeight).observe(document.body);
+  window.addEventListener("resize", reportHeight);
+
+  /* ================================================================= tabs */
+  const inited = {};
+  function show(ch) {
+    $$(".rail button").forEach((b) => b.classList.toggle("on", b.dataset.ch === ch));
+    $$("section.ch").forEach((s) => s.classList.toggle("on", s.id === "ch-" + ch));
+    if (!inited[ch] && init[ch]) { init[ch](); inited[ch] = true; }
+    if (ch === "idea") drawLab();
+    reportHeight();
+    setTimeout(reportHeight, 60);
+  }
+  $$(".rail button").forEach((b) => b.addEventListener("click", () => show(b.dataset.ch)));
+
+  /* ================================================================= hero wave */
+  (function hero() {
+    const cv = $("#hw"), ctx = cv.getContext("2d");
+    let W = 0, H = 0, dpr = 1, bumps = [], t0 = performance.now(), visible = true, raf = 0, last = 0;
+    function size() { const r = cv.getBoundingClientRect(); dpr = Math.min(window.devicePixelRatio || 1, 2); W = r.width; H = r.height; cv.width = W * dpr; cv.height = H * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); }
+    const base = () => H * 0.76;
+    const f = (x, t) => base()
+      - 22 * Math.sin(x / 150 + t * 0.9) - 12 * Math.sin(x / 61 + t * 1.7) - 6 * Math.sin(x / 23 - t * 2.3)
+      - bumps.reduce((a, b) => { const age = t - b.t; if (age > 4) return a; return a + b.amp * Math.exp(-((x - b.x) ** 2) / 2600) * Math.exp(-age * 0.9) * Math.cos(age * 6); }, 0);
+    function draw(now) {
+      const t = (now - t0) / 1000;
+      ctx.clearRect(0, 0, W, H);
+      ctx.strokeStyle = "rgba(108,140,255,.07)"; ctx.lineWidth = 1;
+      for (let y = 30; y < H; y += 36) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+      const g = ctx.createLinearGradient(0, 0, W, 0); g.addColorStop(0, "#6c8cff"); g.addColorStop(0.6, "#26a69a"); g.addColorStop(1, "#f5b041");
+      ctx.beginPath();
+      for (let x = 0; x <= W; x += 4) { const y = f(x, t); x === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); }
+      ctx.lineTo(W, H); ctx.lineTo(0, H); ctx.closePath();
+      const fill = ctx.createLinearGradient(0, H * 0.4, 0, H); fill.addColorStop(0, "rgba(108,140,255,.20)"); fill.addColorStop(1, "rgba(108,140,255,0)");
+      ctx.fillStyle = fill; ctx.fill();
+      ctx.beginPath();
+      for (let x = 0; x <= W; x += 3) { const y = f(x, t); x === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); }
+      ctx.strokeStyle = g; ctx.lineWidth = 2.5; ctx.shadowColor = "rgba(108,140,255,.8)"; ctx.shadowBlur = 14; ctx.stroke(); ctx.shadowBlur = 0;
+      const ex = W - 40, ey = f(ex, t);
+      ctx.fillStyle = "#f5b041"; ctx.beginPath(); ctx.arc(ex, ey, 4.5, 0, 7); ctx.fill();
+      ctx.strokeStyle = "rgba(245,176,65,.35)"; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(ex, ey, 9 + 3 * Math.sin(t * 3), 0, 7); ctx.stroke();
+    }
+    function loop(now) { raf = requestAnimationFrame(loop); if (!visible || now - last < 33) return; last = now; draw(now); }
+    size(); draw(performance.now());
+    window.addEventListener("resize", () => { size(); draw(performance.now()); });
+    if (!reduce) {
+      cv.parentNode.addEventListener("pointermove", (e) => { const r = cv.getBoundingClientRect(); bumps.push({ x: e.clientX - r.left, amp: 38, t: (performance.now() - t0) / 1000 }); if (bumps.length > 14) bumps.shift(); });
+      if ("IntersectionObserver" in window) new IntersectionObserver((en) => { visible = en[0].isIntersecting; }).observe(cv);
+      raf = requestAnimationFrame(loop);
+    }
+  })();
+
+  /* ================================================================= signal lab */
+  const lab = { seed: 7, bars: [], ind: null, sigs: [], sel: -1, reqRsi: true, reqVol: true, volx: 1.2 };
+  function rng(a) { return function () { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+  function genMarket(seed, n) {
+    const r = rng(seed), bars = []; let p = 100, drift = 0, left = 0;
+    for (let i = 0; i < n; i++) {
+      if (left <= 0) { drift = (r() - 0.5) * 1.1; left = 10 + Math.floor(r() * 24); } left--;
+      const o = p, c = o * (1 + drift * 0.0011 + (r() - 0.5) * 0.012);
+      const h = Math.max(o, c) * (1 + r() * 0.0045), l = Math.min(o, c) * (1 - r() * 0.0045);
+      const v = 1000 * (0.55 + r() * 0.9) * (r() < 0.14 ? 1.7 + r() * 1.6 : 1);
+      bars.push({ o, h, l, c, v }); p = c;
+    }
+    return bars;
+  }
+  function ema(vals, n) { const k = 2 / (n + 1), out = []; vals.forEach((v, i) => out.push(i ? v * k + out[i - 1] * (1 - k) : v)); return out; }
+  function rsi14(c) {
+    const out = new Array(c.length).fill(50); let ag = 0, al = 0;
+    for (let i = 1; i < c.length; i++) {
+      const d = c[i] - c[i - 1], g = Math.max(d, 0), l = Math.max(-d, 0);
+      if (i <= 14) { ag += g / 14; al += l / 14; } else { ag = (ag * 13 + g) / 14; al = (al * 13 + l) / 14; }
+      if (i >= 14) out[i] = al === 0 ? 100 : 100 - 100 / (1 + ag / al);
+    }
+    return out;
+  }
+  function computeLab() {
+    const b = lab.bars, c = b.map((x) => x.c);
+    const f = ema(c, 9), s = ema(c, 21), r = rsi14(c);
+    const vs = b.map((_, i) => i < 20 ? null : b.slice(i - 19, i + 1).reduce((a, x) => a + x.v, 0) / 20);
+    lab.ind = { f, s, r, vs };
+    const sigs = []; let prevDir = null;
+    for (let i = 21; i < b.length - 1; i++) {
+      const bull = f[i] > s[i], dir = bull ? "long" : "short";
+      const mom = !lab.reqRsi || (bull ? (r[i] > 50 && r[i] < 70) : (r[i] < 50 && r[i] > 30));
+      const vol = !lab.reqVol || b[i].v > lab.volx * vs[i];
+      const on = mom && vol;
+      if (on && prevDir !== dir) sigs.push({ i, dir });
+      prevDir = on ? dir : null;
+    }
+    lab.sigs = sigs;
+    lab.sel = sigs.length ? Math.min(Math.max(lab.sel, 0), sigs.length - 1) : -1;
+  }
+  function tradeFor(sig) {
+    const b = lab.bars, { f, s, r } = lab.ind, i = sig.i, long = sig.dir === "long";
+    const e = i + 1, entry = b[e].o;
+    const rng6 = b.slice(Math.max(i - 5, 0), i + 1);
+    const pad = b.slice(Math.max(i - 13, 0), i + 1).reduce((a, x) => a + (x.h - x.l), 0) / 14 * 0.1;
+    let stop = long ? Math.min(...rng6.map((x) => x.l)) - pad : Math.max(...rng6.map((x) => x.h)) + pad;
+    if ((long && stop >= entry) || (!long && stop <= entry)) stop = entry * (long ? 0.99 : 1.01);
+    const risk = Math.abs(entry - stop), tp = entry + (long ? 2 : -2) * risk;
+    let exit = null;
+    for (let k = e; k < b.length; k++) {
+      const hitS = long ? b[k].l <= stop : b[k].h >= stop, hitT = long ? b[k].h >= tp : b[k].l <= tp;
+      if (hitS) { exit = { k, px: stop, why: "Stopped out", R: -1 }; break; }
+      if (hitT) { exit = { k, px: tp, why: "Hit the 1:2 target", R: 2 }; break; }
+      const flip = long ? f[k] < s[k] : f[k] > s[k], rs = long ? r[k] >= 70 : r[k] <= 30;
+      if (flip || rs) { const px = b[k].c; exit = { k, px, why: flip ? "Closed by a trend flip" : "Closed by RSI " + (long ? "70" : "30"), R: ((px - entry) * (long ? 1 : -1)) / risk }; break; }
+    }
+    if (!exit) { const k = b.length - 1, px = b[k].c; exit = { k, px, why: "Still open at the end of the data", R: ((px - entry) * (long ? 1 : -1)) / risk }; }
+    return { e, entry, stop, tp, risk, exit };
+  }
+  const lcv = $("#labcv");
+  let lgeo = null;
+  function drawLab() {
+    if (!lab.bars.length) { lab.bars = genMarket(lab.seed, 110); computeLab(); }
+    const ctx = lcv.getContext("2d"), dpr = Math.min(window.devicePixelRatio || 1, 2), r = lcv.getBoundingClientRect();
+    if (!r.width) return;
+    lcv.width = r.width * dpr; lcv.height = r.height * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const W = r.width, H = r.height, padL = 8, padR = 52, top = 10;
+    const hP = H * 0.62, hV = H * 0.14, hR = H * 0.18, gap = (H - top - hP - hV - hR) / 2;
+    const yP0 = top, yV0 = top + hP + gap, yR0 = yV0 + hV + gap;
+    const b = lab.bars, n = b.length, step = (W - padL - padR) / n, bw = Math.max(step * 0.62, 2);
+    const hi = Math.max(...b.map((x) => x.h)), lo = Math.min(...b.map((x) => x.l)), span = hi - lo;
+    const tr = lab.sel >= 0 ? tradeFor(lab.sigs[lab.sel]) : null;
+    let pHi = hi, pLo = lo; if (tr) { pHi = Math.max(pHi, tr.tp, tr.stop); pLo = Math.min(pLo, tr.tp, tr.stop); }
+    const pad = (pHi - pLo) * 0.05; pHi += pad; pLo -= pad;
+    const X = (i) => padL + step * (i + 0.5), Y = (p) => yP0 + (pHi - p) / (pHi - pLo) * hP;
+    lgeo = { X, Y, step, padL, n };
+    ctx.clearRect(0, 0, W, H);
+    ctx.strokeStyle = "rgba(42,46,69,.6)"; ctx.lineWidth = 1; ctx.fillStyle = "#8d93b0"; ctx.font = "11px " + getComputedStyle(document.body).fontFamily;
+    for (let k = 0; k <= 4; k++) { const p = pLo + (pHi - pLo) * k / 4, y = Y(p); ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(W - padR, y); ctx.stroke(); ctx.fillText(p.toFixed(1), W - padR + 6, y + 4); }
+    // trade box
+    if (tr) {
+      const x0 = X(tr.e) - step / 2, x1 = X(tr.exit.k) + step / 2;
+      ctx.fillStyle = "rgba(239,83,80,.14)"; const ys = Y(tr.stop), ye = Y(tr.entry), yt = Y(tr.tp);
+      ctx.fillRect(x0, Math.min(ye, ys), x1 - x0, Math.abs(ys - ye));
+      ctx.fillStyle = "rgba(38,166,154,.14)"; ctx.fillRect(x0, Math.min(ye, yt), x1 - x0, Math.abs(yt - ye));
+      ctx.setLineDash([5, 4]); ctx.lineWidth = 1.4;
+      [[ye, "#9aa3c7"], [ys, "#ef5350"], [yt, "#26a69a"]].forEach(([y, col]) => { ctx.strokeStyle = col; ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(Math.max(x1, x0 + 40), y); ctx.stroke(); });
+      ctx.setLineDash([]); ctx.font = "600 11px " + getComputedStyle(document.body).fontFamily;
+      ctx.fillStyle = "#ef5350"; ctx.fillText("stop " + tr.stop.toFixed(2), x0 + 4, ys + (ys > ye ? 13 : -4));
+      ctx.fillStyle = "#26a69a"; ctx.fillText("target " + tr.tp.toFixed(2), x0 + 4, yt + (yt > ye ? 13 : -4));
+    }
+    // volume
+    const vmax = Math.max(...b.map((x) => x.v));
+    b.forEach((x, i) => { const spike = lab.ind.vs[i] && x.v > lab.volx * lab.ind.vs[i]; ctx.fillStyle = spike ? "rgba(245,176,65,.85)" : "rgba(141,147,176,.35)"; const h = x.v / vmax * hV; ctx.fillRect(X(i) - bw / 2, yV0 + hV - h, bw, h); });
+    ctx.fillStyle = "#8d93b0"; ctx.fillText("Volume (amber = spike)", padL + 4, yV0 + 11);
+    // rsi
+    const Yr = (v) => yR0 + (100 - v) / 100 * hR;
+    ctx.strokeStyle = "rgba(239,83,80,.4)"; ctx.setLineDash([3, 4]); [30, 50, 70].forEach((v) => { ctx.beginPath(); ctx.moveTo(padL, Yr(v)); ctx.lineTo(W - padR, Yr(v)); ctx.stroke(); }); ctx.setLineDash([]);
+    ctx.fillStyle = "rgba(108,140,255,.1)"; ctx.fillRect(padL, Yr(70), W - padL - padR, Yr(50) - Yr(70)); ctx.fillRect(padL, Yr(50), W - padL - padR, Yr(30) - Yr(50));
+    ctx.beginPath(); lab.ind.r.forEach((v, i) => i ? ctx.lineTo(X(i), Yr(v)) : ctx.moveTo(X(i), Yr(v))); ctx.strokeStyle = "#6c8cff"; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.fillStyle = "#8d93b0"; ctx.fillText("RSI (bands: 30 to 50 and 50 to 70)", padL + 4, yR0 + 11);
+    // candles
+    b.forEach((x, i) => {
+      const up = x.c >= x.o, col = up ? "#26a69a" : "#ef5350"; ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(X(i), Y(x.h)); ctx.lineTo(X(i), Y(x.l)); ctx.stroke();
+      const y1 = Y(Math.max(x.o, x.c)), y2 = Y(Math.min(x.o, x.c)); ctx.fillRect(X(i) - bw / 2, y1, bw, Math.max(y2 - y1, 1));
+    });
+    [[lab.ind.f, "#4c8dff"], [lab.ind.s, "#ef5350"]].forEach(([arr, col]) => { ctx.beginPath(); arr.forEach((v, i) => i ? ctx.lineTo(X(i), Y(v)) : ctx.moveTo(X(i), Y(v))); ctx.strokeStyle = col; ctx.lineWidth = 1.4; ctx.stroke(); });
+    // exit marker
+    if (tr) { const xx = X(tr.exit.k), yy = Y(tr.exit.px); ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(xx, yy, 4, 0, 7); ctx.fill(); ctx.strokeStyle = tr.exit.R >= 0 ? "#26a69a" : "#ef5350"; ctx.lineWidth = 2; ctx.stroke(); }
+    // signals
+    lab.sigs.forEach((sg, j) => {
+      const x = X(sg.i), long = sg.dir === "long", y = long ? Y(b[sg.i].l) + 14 : Y(b[sg.i].h) - 14, sel = j === lab.sel;
+      ctx.fillStyle = long ? "#26a69a" : "#ef5350"; ctx.strokeStyle = sel ? "#fff" : "transparent"; ctx.lineWidth = 2;
+      ctx.beginPath(); if (long) { ctx.moveTo(x, y - 8); ctx.lineTo(x - 7, y + 5); ctx.lineTo(x + 7, y + 5); } else { ctx.moveTo(x, y + 8); ctx.lineTo(x - 7, y - 5); ctx.lineTo(x + 7, y - 5); } ctx.closePath(); ctx.fill(); ctx.stroke();
+      sg._x = x; sg._y = y;
+    });
+    // legend
+    ctx.font = "11px " + getComputedStyle(document.body).fontFamily; ctx.fillStyle = "#4c8dff"; ctx.fillText("EMA 9", padL + 4, yP0 + 12); ctx.fillStyle = "#ef5350"; ctx.fillText("EMA 21", padL + 50, yP0 + 12);
+    readout(tr);
+  }
+  function readout(tr) {
+    const el = $("#labread"), n = lab.sigs.length;
+    if (lab.sel < 0) { el.innerHTML = "<b>No signals.</b> With these conditions nothing qualified in this market. Click <b>New market</b> or relax a condition."; return; }
+    const sg = lab.sigs[lab.sel], b = lab.bars[sg.i], { r, vs } = lab.ind;
+    const R = tr.exit.R;
+    el.innerHTML = `<b>${n} signal${n === 1 ? "" : "s"}</b> in this market. Selected: <b>${sg.dir.toUpperCase()}</b> on bar ${sg.i + 1}. ` +
+      `Trend ${sg.dir === "long" ? "up" : "down"}, RSI ${r[sg.i].toFixed(0)}, volume ${(b.v / vs[sg.i]).toFixed(2)}× average. ` +
+      `Entry at the next open ${tr.entry.toFixed(2)}, stop ${tr.stop.toFixed(2)}, target ${tr.tp.toFixed(2)}. ` +
+      `<b style="color:${R >= 0 ? "#26a69a" : "#ef5350"}">${tr.exit.why}: ${R >= 0 ? "+" : ""}${R.toFixed(2)} R</b>`;
+  }
+  $("#newmkt").addEventListener("click", () => { lab.seed = Math.floor(Math.random() * 1e6); lab.bars = genMarket(lab.seed, 110); lab.sel = 0; computeLab(); drawLab(); });
+  const toggle = (id, key) => { const el = $(id); const go = () => { lab[key] = !lab[key]; el.classList.toggle("on", lab[key]); el.setAttribute("aria-checked", lab[key]); computeLab(); drawLab(); }; el.addEventListener("click", go); el.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } }); };
+  toggle("#reqRsi", "reqRsi"); toggle("#reqVol", "reqVol");
+  $("#volx").addEventListener("input", (e) => { lab.volx = +e.target.value; $("#volxv").textContent = lab.volx.toFixed(1) + "×"; computeLab(); drawLab(); });
+  const stepSig = (d) => { if (!lab.sigs.length) return; lab.sel = (lab.sel + d + lab.sigs.length) % lab.sigs.length; drawLab(); };
+  $("#prevsig").addEventListener("click", () => stepSig(-1)); $("#nextsig").addEventListener("click", () => stepSig(1));
+  lcv.addEventListener("click", (e) => {
+    const r = lcv.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+    let best = -1, bd = 22; lab.sigs.forEach((s, j) => { const d = Math.hypot(s._x - x, s._y - y); if (d < bd) { bd = d; best = j; } });
+    if (best >= 0) { lab.sel = best; drawLab(); }
+  });
+  window.addEventListener("resize", () => { if ($("#ch-idea").classList.contains("on")) drawLab(); });
+
+  /* ---- four SMC mini diagrams ---- */
+  const MINI = [
+    { t: "Break of structure", d: "Price closes beyond the last swing high: the trend has proof.",
+      svg: (s) => { line(s, 8, 62, 54, 62, "#8d93b0", 1, "3 3"); candles(s, [[14, 70, 50, 62, 58], [28, 66, 40, 48, 62], [42, 54, 30, 36, 50], [58, 50, 14, 20, 44], [74, 34, 8, 14, 28]]); line(s, 40, 36, 112, 36, "#f5b041", 1.4, "4 3"); txt(s, 100, 30, "BOS", "#f5b041"); } },
+    { t: "Order block", d: "The last opposite candle before a strong move. Price often returns to it.",
+      svg: (s) => { rect(s, 38, 50, 92, 26, "rgba(38,166,154,.22)", "#26a69a"); candles(s, [[14, 70, 56, 62, 66], [28, 66, 52, 58, 62], [44, 74, 50, 70, 54, "d"], [60, 54, 28, 32, 50], [76, 36, 14, 18, 32], [92, 30, 18, 26, 22]]); txt(s, 98, 66, "demand zone", "#26a69a"); } },
+    { t: "Fair value gap", d: "A three-candle jump that left a hole. Price tends to fill part of it.",
+      svg: (s) => { rect(s, 40, 36, 80, 18, "rgba(108,140,255,.22)", "#6c8cff"); candles(s, [[20, 78, 52, 74, 56], [48, 62, 26, 32, 58], [76, 38, 10, 16, 34]]); line(s, 28, 52, 120, 52, "#6c8cff", 1, "3 3"); line(s, 76, 36, 120, 36, "#6c8cff", 1, "3 3"); txt(s, 88, 48, "gap", "#6c8cff"); } },
+    { t: "Premium and discount", d: "Longs are better below the midpoint of the range, shorts above it.",
+      svg: (s) => { rect(s, 10, 8, 150, 38, "rgba(239,83,80,.14)", null); rect(s, 10, 46, 150, 38, "rgba(38,166,154,.14)", null); line(s, 10, 46, 160, 46, "#8d93b0", 1.2, "5 4"); txt(s, 14, 20, "premium", "#ef5350"); txt(s, 14, 80, "discount", "#26a69a"); txt(s, 112, 42, "equilibrium", "#8d93b0"); polyline(s, [[14, 70], [40, 56], [58, 64], [84, 34], [104, 40], [130, 18]], "#6c8cff"); } },
+  ];
+  function line(g, x1, y1, x2, y2, c, w, d) { svgEl("line", { x1, y1, x2, y2, stroke: c, "stroke-width": w, "stroke-dasharray": d || "" }, g); }
+  function rect(g, x, y, w, h, f, s) { svgEl("rect", { x, y, width: w, height: h, fill: f, stroke: s || "none", rx: 2 }, g); }
+  function txt(g, x, y, t, c) { const e = svgEl("text", { x, y, fill: c, "font-size": 10, "font-family": "sans-serif" }, g); e.textContent = t; }
+  function polyline(g, pts, c) { svgEl("polyline", { points: pts.map((p) => p.join(",")).join(" "), fill: "none", stroke: c, "stroke-width": 2, "stroke-linejoin": "round" }, g); }
+  function candles(g, list) { list.forEach(([x, o, h, l, c, kind]) => { const up = kind ? false : c < o; const col = up ? "#26a69a" : "#ef5350"; const hi = Math.min(o, c), lo = Math.max(o, c); line(g, x, Math.min(h, hi) - 0, x, Math.max(l, lo) + 0, col, 1.4); svgEl("rect", { x: x - 5, y: hi, width: 10, height: Math.max(lo - hi, 2), fill: col }, g); }); }
+  (function minis() { const box = $("#minis"); MINI.forEach((m) => { const d = document.createElement("div"); d.className = "mini"; const s = svgEl("svg", { viewBox: "0 0 170 92" }); const g = svgEl("g", {}, s); m.svg(g); d.appendChild(s); d.insertAdjacentHTML("beforeend", `<b>${m.t}</b><span>${m.d}</span>`); box.appendChild(d); }); })();
+
+  /* ================================================================= architecture map */
+  const NODES = {
+    sip:  { x: 30,  y: 55,  w: 170, h: 58, n: "Alpaca SIP", s: "consolidated tape, 15 min late, free",
+      d: { does: "The full-market price feed Alpaca gives free accounts, delayed by 15 minutes. It is the exact, complete history used for signals.", code: "src/data_ingestion/alpaca_data.py", tech: "Alpaca market data API", stop: "No. It only supplies data.", cost: "Free" } },
+    iex:  { x: 30,  y: 125, w: 170, h: 58, n: "Alpaca IEX", s: "real-time prices, free",
+      d: { does: "A real-time feed from one exchange. AlphaWave uses its prices for the newest bar and rescales its volume to the full-market scale, then flags the bar as an estimate and never stores it.", code: "src/data_ingestion/live_tail.py", tech: "Alpaca market data API", stop: "No.", cost: "Free" } },
+    news: { x: 30,  y: 200, w: 170, h: 58, n: "News feeds", s: "Finnhub, NewsAPI",
+      d: { does: "Headlines for each ticker, pulled hourly.", code: "src/sentiment/", tech: "Finnhub and NewsAPI free keys", stop: "Indirectly, through the sentiment gate.", cost: "Free tier" } },
+    ing:  { x: 250, y: 55,  w: 170, h: 70, n: "Ingestion", s: "backfill and live tail",
+      d: { does: "Tops up stored 15-minute bars from Alpaca and adds the real-time estimate for the bar still forming. Only completed bars are used for decisions.", code: "src/data_ingestion/backfill.py, live_tail.py", tech: "Python, pandas", stop: "No.", cost: "Free" } },
+    smc:  { x: 470, y: 55,  w: 190, h: 84, n: "SMC engine", s: "EMA 9/21, RSI, volume, structure, OB, FVG",
+      d: { does: "Ports the TradingView script to Python: trend, momentum and volume confirmations plus swing structure, order blocks, fair value gaps and premium/discount zones. It also proposes the stop and target levels.", code: "src/smc_logic/", tech: "Python, pandas, numpy", stop: "It decides whether a signal exists at all.", cost: "Free" } },
+    sent: { x: 470, y: 200, w: 190, h: 56, n: "Sentiment", s: "FinBERT scores headlines",
+      d: { does: "Scores each headline from negative to positive. A strongly negative score blocks a long; strongly positive blocks a short.", code: "src/sentiment/", tech: "FinBERT, runs locally", stop: "Yes, when it strongly opposes the trade.", cost: "Free" } },
+    ml:   { x: 470, y: 280, w: 190, h: 52, n: "ML filter", s: "shadow: scores, cannot veto", shadow: 1,
+      d: { does: "An XGBoost model gives each signal a probability of winning. It is weak so far, so it is in shadow mode: its score is logged next to the outcome and does not block anything.", code: "src/ml/", tech: "XGBoost", stop: "Not yet. Shadow mode.", cost: "Free" } },
+    cou:  { x: 470, y: 350, w: 190, h: 52, n: "Shadow council", s: "7 rule-based votes, logged only", shadow: 1,
+      d: { does: "Seven independent rule checks (momentum room, volume, structure, premium/discount, blocks, higher timeframes, sentiment) vote on each signal. Votes are recorded and graded later. They never change a decision.", code: "src/decision_engine/council.py", tech: "Python rules, no AI cost", stop: "No. Shadow mode.", cost: "Free" } },
+    dec:  { x: 720, y: 55,  w: 250, h: 96, n: "Decision engine", s: "triple confirmation, risk gates, sizing",
+      d: { does: "Takes a signal and either says why not, or produces an order with stop, 1:2 target, size and a written reason. Every call, taken or blocked, is logged.", code: "src/decision_engine/engine.py", tech: "Python", stop: "Yes. This is where most blocks happen.", cost: "Free" } },
+    ctl:  { x: 720, y: 190, w: 250, h: 60, n: "Trade control", s: "Off, Ask or Auto per ticker",
+      d: { does: "Your per-ticker switch. Off ignores entries, Ask makes a proposal, Auto sends the order.", code: "src/execution/control.py", tech: "Python, SQLite", stop: "Yes, when set to Off.", cost: "Free" } },
+    you:  { x: 720, y: 290, w: 250, h: 60, n: "You, at the dashboard", s: "approve, drag SL/TP, close", human: 1,
+      d: { does: "A banner and chime announce a proposal. Drag the stop and target on the chart, then confirm or reject. Open positions can be adjusted or closed from the same screen.", code: "src/dashboard/app.py, chart.html", tech: "Streamlit, Lightweight Charts", stop: "Yes. You can reject.", cost: "Free" } },
+    brk:  { x: 720, y: 400, w: 250, h: 64, n: "Alpaca paper broker", s: "stop and 1:2 target rest at the broker",
+      d: { does: "Receives one bracket order: entry plus stop and take-profit. The exits live at the broker, so they trigger and fill even if this app is offline.", code: "src/execution/alpaca_execution.py", tech: "Alpaca trading API (paper)", stop: "It can reject an order.", cost: "Free paper account" } },
+    rec:  { x: 720, y: 500, w: 250, h: 56, n: "Reconcile and log", s: "books fills, checks stops every 30 s",
+      d: { does: "Compares the trade log with the broker, books exits at their real fill prices, and warns if an open position ever lacks a resting stop.", code: "src/execution/trade_log.py", tech: "Python", stop: "No.", cost: "Free" } },
+  };
+  const EDGES = {
+    e_sip:   "M200 84 L250 84",
+    e_iex:   "M200 154 L250 112",
+    e_news:  "M200 229 L470 229",
+    e_ing:   "M420 90 L470 100",
+    e_smc:   "M660 97 L720 97",
+    e_adv:   "M660 228 L690 228 L690 130 L720 130",
+    e_dec:   "M845 151 L845 190",
+    e_ask:   "M845 250 L845 290",
+    e_you:   "M845 350 L845 400",
+    e_auto:  "M720 220 L702 220 L702 432 L720 432",
+    e_brk:   "M845 464 L845 500",
+  };
+  const SOFT = ["M335 125 L335 595", "M470 120 L450 120 L450 595", "M470 240 L450 240", "M470 306 L450 306", "M470 376 L450 376", "M970 90 L985 90 L985 595", "M970 220 L985 220", "M970 320 L985 320", "M970 432 L985 432", "M970 528 L985 528"];
+  const SCEN = {
+    ask: { steps: [["e_sip", "ing", "A 15-minute bar closes. Prices arrive from Alpaca SIP, 15 minutes late, and IEX adds a real-time estimate for the newest bar."], ["e_ing", "smc", "The SMC engine reads the bars: EMA 9 above 21, RSI inside its band, volume above 1.2 times average. All three agree."], ["e_smc", "dec", "A long signal reaches the decision engine with a proposed stop and a 1:2 target."], ["e_adv", "dec", "News sentiment does not oppose it. The ML filter and the council vote quietly in the shadows; the votes are logged."], ["e_dec", "ctl", "Every gate passes and the size is set at 0.5% of equity risk. The ticker is set to Ask."], ["e_ask", "you", "A banner and chime appear. You drag the stop and target if you want, then press Confirm."], ["e_you", "brk", "One bracket order goes to Alpaca: entry, stop and a take-profit at 1:2."], ["e_brk", "rec", "Reconcile books the fill. From here the stop, the target, the RSI/trend exits or your Close button can end the trade."]] },
+    auto: { steps: [["e_sip", "ing", "A 15-minute bar closes and fresh prices arrive."], ["e_ing", "smc", "All three confirmations agree on a short signal."], ["e_smc", "dec", "The decision engine proposes stop, target and size."], ["e_adv", "dec", "Sentiment and the shadow voters are consulted and logged."], ["e_dec", "ctl", "Every gate passes. This ticker is set to Auto."], ["e_auto", "brk", "Auto skips you: the bracket order goes straight to Alpaca. All risk limits already applied."], ["e_brk", "rec", "Reconcile books the fill and watches the stop."]] },
+    gate: { steps: [["e_sip", "ing", "A 15-minute bar closes and fresh prices arrive."], ["e_ing", "smc", "All three confirmations agree on a long signal."], ["e_smc", "dec", "The signal reaches the decision engine."], ["e_adv", "dec", "Sentiment and the shadow voters are consulted."]], stopAt: ["dec", "Blocked: the daily loss limit of 2% has been reached. No order is created, and the reason is written to the decision log. Other possible blocks: trading window, stale signal, maximum open positions, kill switch, stop too wide or too tight, sentiment, position size."] },
+    reject: { steps: [["e_sip", "ing", "A 15-minute bar closes and fresh prices arrive."], ["e_ing", "smc", "All three confirmations agree."], ["e_smc", "dec", "The signal reaches the decision engine."], ["e_adv", "dec", "Sentiment is fine. The shadow voters log their opinion."], ["e_dec", "ctl", "Every gate passes. The ticker is set to Ask."], ["e_ask", "you", "The banner appears. You look at the chart and the council vote."]], stopAt: ["you", "You press Reject. Nothing is sent to the broker, the proposal is closed, and the decision is kept in the log either way."] },
+  };
+  function buildMap() {
+    const svg = $("#map"); svg.innerHTML = "";
+    const defs = svgEl("defs", {}, svg);
+    const m = svgEl("marker", { id: "ar", viewBox: "0 0 10 10", refX: 8, refY: 5, markerWidth: 7, markerHeight: 7, orient: "auto-start-reverse" }, defs); svgEl("path", { d: "M0 0 L10 5 L0 10 z", fill: "#5a6290" }, m);
+    const f = svgEl("filter", { id: "glow", x: "-100%", y: "-100%", width: "300%", height: "300%" }, defs); svgEl("feGaussianBlur", { stdDeviation: 4, result: "b" }, f); const fm = svgEl("feMerge", {}, f); svgEl("feMergeNode", { in: "b" }, fm); svgEl("feMergeNode", { in: "SourceGraphic" }, fm);
+    // bands
+    const sb = svgEl("g", { class: "band" }, svg);
+    svgEl("rect", { x: 250, y: 8, width: 735, height: 30, rx: 8, fill: "#13172a", stroke: "#2b3150" }, sb);
+    const st = svgEl("text", { x: 266, y: 28 }, sb); st.textContent = "Scheduler: runs each 15-minute bar close · approvals and closes every 2 s · reconcile every 30 s";
+    const bus = svgEl("g", { class: "band" }, svg);
+    svgEl("rect", { x: 30, y: 595, width: 955, height: 40, rx: 10, fill: "#13172a", stroke: "#33395a" }, bus);
+    const bt = svgEl("text", { x: 48, y: 620 }, bus); bt.textContent = "SQLite store: bars · signals · decisions · proposals · trades · votes · events. Every component writes here, and the dashboard reads it."; bt.setAttribute("style", "fill:#c9cde2");
+    SOFT.forEach((d) => svgEl("path", { d, class: "edge soft" }, svg));
+    Object.entries(EDGES).forEach(([id, d]) => { const p = svgEl("path", { d, id, class: "edge" + (id === "e_adv" ? " adv" : ""), "marker-end": "url(#ar)" }, svg); });
+    const lab = (x, y, t) => { const e = svgEl("text", { x, y, class: "elab" }, svg); e.textContent = t; };
+    lab(852, 275, "Ask"); lab(666, 330, "Auto"); lab(852, 385, "confirmed"); lab(648, 180, "advice");
+    Object.entries(NODES).forEach(([id, n]) => {
+      const g = svgEl("g", { class: "node" + (n.shadow ? " shadow" : "") + (n.human ? " human" : ""), id: "n_" + id, tabindex: 0, role: "button", "aria-label": n.n }, svg);
+      svgEl("rect", { class: "b", x: n.x, y: n.y, width: n.w, height: n.h, rx: 11 }, g);
+      const a = svgEl("text", { class: "n", x: n.x + 14, y: n.y + 24 }, g); a.textContent = n.n;
+      const b = svgEl("text", { class: "s", x: n.x + 14, y: n.y + 42 }, g);
+      const words = n.s.split(" "), lines = []; let cur = "";
+      const max = Math.floor((n.w - 24) / 5.6);
+      words.forEach((w) => { if ((cur + " " + w).trim().length > max) { lines.push(cur); cur = w; } else cur = (cur + " " + w).trim(); }); lines.push(cur);
+      lines.forEach((ln, i) => { const ts = svgEl("tspan", { x: n.x + 14, dy: i ? 13 : 0 }, b); ts.textContent = ln; });
+      const pick = () => showDetail(id); g.addEventListener("click", pick); g.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } });
+    });
+    const pk = svgEl("circle", { id: "pk", r: 7, cx: -20, cy: -20, fill: "#f5b041", filter: "url(#glow)", opacity: 0 }, svg);
+  }
+  function showDetail(id) {
+    $$(".node").forEach((n) => n.classList.toggle("sel", n.id === "n_" + id));
+    const n = NODES[id], d = $("#detail"); d.style.display = "block";
+    d.innerHTML = `<h4>${n.n}</h4><div class="muted">${n.s}</div><dl><dt>What it does</dt><dd>${n.d.does}</dd><dt>Where in the code</dt><dd><code>${n.d.code}</code></dd><dt>Built with</dt><dd>${n.d.tech}</dd><dt>Can it stop a trade?</dt><dd>${n.d.stop}</dd><dt>Cost</dt><dd>${n.d.cost}</dd></dl>`;
+    reportHeight();
+  }
+  let flying = false;
+  function fly() {
+    if (flying) return; flying = true;
+    const sc = SCEN[$("#scn").value], pk = $("#pk"), cap = $("#caption");
+    $$(".node").forEach((n) => n.classList.remove("lit", "stop", "sel")); $$(".edge").forEach((e) => e.classList.remove("hot")); $("#detail").style.display = "none";
+    let i = 0;
+    const next = () => {
+      if (i >= sc.steps.length) {
+        if (sc.stopAt) { const nd = $("#n_" + sc.stopAt[0]); nd.classList.remove("lit"); nd.classList.add("stop"); cap.innerHTML = "<b>Stopped.</b> " + sc.stopAt[1]; }
+        else cap.innerHTML += " <b>Done.</b>";
+        pk.setAttribute("opacity", 0); flying = false; return;
+      }
+      const [eid, to, text] = sc.steps[i++]; const path = document.getElementById(eid), len = path.getTotalLength();
+      path.classList.add("hot"); cap.innerHTML = `<b>Step ${i} of ${sc.steps.length}.</b> ${text}`;
+      pk.setAttribute("opacity", 1);
+      const dur = reduce ? 1 : 750, t0 = performance.now();
+      const tick = (now) => { const k = Math.min((now - t0) / dur, 1), e = k < .5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2, p = path.getPointAtLength(len * e); pk.setAttribute("cx", p.x); pk.setAttribute("cy", p.y);
+        if (k < 1) requestAnimationFrame(tick); else { const nd = $("#n_" + to); if (nd) nd.classList.add("lit"); setTimeout(next, reduce ? 50 : 650); } };
+      requestAnimationFrame(tick);
+    };
+    next();
+  }
+
+  /* ================================================================= trade life */
+  const STEPS = [
+    ["A bar closes", "Every 15 minutes, a few seconds after the bar ends, the scheduler wakes up.", "Only closed bars are ever used. The forming bar is shown as an estimate and never decides anything.", "src/scheduler/run_loop.py", "Nothing yet."],
+    ["Fresh data arrives", "Alpaca SIP supplies exact bars 15 minutes late; IEX supplies a real-time price for the newest bar, with volume rescaled to the full market.", "If the live estimate fails, the cycle uses the delayed data and logs why.", "src/data_ingestion/", "A data failure skips the symbol, it does not trade blindly."],
+    ["The SMC engine reads the chart", "Trend, RSI, volume, swing structure, order blocks, gaps and the premium/discount zone are computed for the latest bar.", "The same logic as the TradingView script, checked against it.", "src/smc_logic/", "No signal means no trade."],
+    ["Three confirmations", "EMA 9 vs 21 for direction, RSI inside its band, volume above 1.2 times its 20-bar average. All three, on a closed bar.", "Entries fill at the next bar's open, like the Pine strategy.", "src/smc_logic/triple_confirmation.py", "Any missing confirmation ends it here."],
+    ["The gates", "Trading window, signal age, open-position limit, daily loss limit, kill switch, sentiment, stop width, position size.", "Each gate that blocks writes its reason to the decision log.", "src/decision_engine/engine.py", "Any gate can stop the trade."],
+    ["Levels and size", "The stop goes beyond the nearest protective zone, the target at twice that distance, and the size risks 0.5% of equity, capped at 5% of equity per position.", "The stop must be at least 0.25 ATR and at most 5% of price away.", "src/smc_logic/levels.py", "A stop too tight or too wide blocks it."],
+    ["Shadow opinions", "The ML filter and the seven-voter council score the signal and their opinion is logged beside the real decision.", "They are graded against outcomes after two to four weeks.", "src/ml/, src/decision_engine/council.py", "Not yet. They only observe."],
+    ["Off, Ask or Auto", "Off ignores it. Ask makes a proposal with a banner and chime. Auto sends it.", "Proposals expire after 10 minutes if nobody answers.", "src/execution/control.py", "Off, or your Reject."],
+    ["You confirm, or edit", "Drag the stop and target on the chart, then confirm. The levels you set replace the proposed ones after validation.", "A stop can be widened to at most twice its original distance.", "src/dashboard/", "Your Reject, or a failed validation."],
+    ["The bracket order", "One order goes to Alpaca with the entry, a stop and a take-profit. The scheduler re-checks the live price just before sending.", "From now on the exits rest at the broker.", "src/execution/alpaca_execution.py", "The broker can refuse it."],
+    ["Exits and the record", "The stop, the 1:2 target, an RSI 70/30 or trend-flip exit on a closed bar, your Close button, or the pre-close flatten ends the trade. The real fill price is booked.", "Every 30 seconds reconcile compares the log with the broker.", "src/execution/trade_log.py", "Nothing: this is how it ends."],
+  ];
+  let curStep = 0;
+  function drawSteps() {
+    const ol = $("#steps"); ol.innerHTML = "";
+    STEPS.forEach((s, i) => { const li = document.createElement("li"); li.className = i === curStep ? "on" : i < curStep ? "done" : ""; li.tabIndex = 0; li.innerHTML = `<i>${i + 1}</i>${s[0]}`; li.addEventListener("click", () => { curStep = i; drawSteps(); }); li.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); curStep = i; drawSteps(); } }); ol.appendChild(li); });
+    const s = STEPS[curStep];
+    $("#stepcard").innerHTML = `<h4>${s[0]}</h4><p class="t">${s[1]}</p><dl><dt>Good to know</dt><dd>${s[2]}</dd><dt>Where in the code</dt><dd><code>${s[3]}</code></dd><dt>Can it stop here?</dt><dd>${s[4]}</dd></dl>` +
+      `<div class="row" style="margin-top:14px"><button class="btn" id="sp">Previous</button><button class="btn primary" id="sn">Next</button></div>`;
+    $("#sp").addEventListener("click", () => { curStep = Math.max(0, curStep - 1); drawSteps(); });
+    $("#sn").addEventListener("click", () => { curStep = Math.min(STEPS.length - 1, curStep + 1); drawSteps(); });
+    reportHeight();
+  }
+  function calc() {
+    const dir = $("#cDir").value, eq = +$("#cEq").value, rk = +$("#cRisk").value / 100, en = +$("#cEntry").value, sp = +$("#cStop").value;
+    const long = dir === "long", dist = Math.abs(en - sp), bad = !(en > 0) || !(dist > 0) || (long ? sp >= en : sp <= en);
+    const k = $("#ckpis"), g = $("#calcsvg");
+    if (bad) { k.innerHTML = `<div class="kpi" style="grid-column:1/-1"><small>Check the inputs</small><b>A ${dir} needs its stop ${long ? "below" : "above"} the entry.</b></div>`; g.innerHTML = ""; return; }
+    const byRisk = Math.floor(eq * rk / dist), byCap = Math.floor(eq * 0.05 / en), qty = Math.max(Math.min(byRisk, byCap), 0);
+    const tp = en + (long ? 2 : -2) * dist, loss = qty * dist, gain = qty * 2 * dist, bind = byCap < byRisk ? "the 5% position cap" : "the risk limit";
+    k.innerHTML = `<div class="kpi"><small>Shares</small><b>${qty}</b></div><div class="kpi"><small>Limited by</small><b style="font-size:16px">${bind}</b></div><div class="kpi"><small>Risk if stopped</small><b style="color:#ef5350">−$${loss.toFixed(2)}</b></div><div class="kpi"><small>Target (1:2)</small><b>${tp.toFixed(2)}</b></div><div class="kpi"><small>Reward at target</small><b style="color:#26a69a">+$${gain.toFixed(2)}</b></div><div class="kpi"><small>Position size</small><b>${(qty * en / eq * 100).toFixed(1)}%</b></div>`;
+    const hi = Math.max(en, sp, tp), lo = Math.min(en, sp, tp), Y = (p) => 14 + (hi - p) / (hi - lo) * 140;
+    g.innerHTML = `<rect x="0" y="${Math.min(Y(en), Y(tp))}" width="700" height="${Math.abs(Y(tp) - Y(en))}" fill="rgba(38,166,154,.18)"/><rect x="0" y="${Math.min(Y(en), Y(sp))}" width="700" height="${Math.abs(Y(sp) - Y(en))}" fill="rgba(239,83,80,.18)"/>` +
+      [[Y(tp), "#26a69a", `target ${tp.toFixed(2)}`], [Y(en), "#9aa3c7", `entry ${en.toFixed(2)}`], [Y(sp), "#ef5350", `stop ${sp.toFixed(2)}`]].map(([y, c, t]) => `<line x1="0" x2="700" y1="${y}" y2="${y}" stroke="${c}" stroke-width="2" stroke-dasharray="${c === "#9aa3c7" ? "6 5" : ""}"/><text x="10" y="${y - 6}" fill="${c}" font-size="13" font-family="sans-serif" font-weight="600">${t}</text>`).join("");
+  }
+  $$("#ch-life .calc input, #ch-life .calc select").forEach((e) => e.addEventListener("input", calc));
+  $("#preset").addEventListener("click", () => { $("#cDir").value = "long"; $("#cEq").value = 100000; $("#cRisk").value = 0.5; $("#cEntry").value = 57.53; $("#cStop").value = 56.52; calc(); });
+
+  /* ================================================================= guardrails */
+  const GATES = [
+    ["Trading window", "Entries only while the market session is open (8:30 to 15:00 Central) and not in the last minutes before the close.", "SESSION_START, SESSION_END, NO_NEW_ENTRIES_MINUTES_BEFORE_CLOSE"],
+    ["Fresh signal", "A signal older than two bars is ignored, so a stale chart cannot trigger a late trade.", "SIGNAL_MAX_AGE_BARS = 2"],
+    ["Open positions", "No more than three positions at once.", "MAX_OPEN_POSITIONS = 3"],
+    ["Daily loss halt", "If the account is down 2% on the day, new entries stop until tomorrow.", "MAX_DAILY_LOSS_PCT = 2%"],
+    ["Kill switch", "One switch on the dashboard blocks every new order immediately. Open positions are left alone.", "Settings tab"],
+    ["Sentiment", "Strongly negative news blocks a long; strongly positive news blocks a short.", "SENTIMENT_BLOCK_THRESHOLD = 0.5"],
+    ["ML filter", "Currently shadow only: it scores but cannot block. It can become a gate if the paper data shows it earns it.", "MIN_MODEL_PROBABILITY = 0 (shadow)"],
+    ["Stop sanity", "Stops tighter than 0.25 ATR would trigger on noise; wider than 5% of price risk too much.", "MIN_STOP_ATR, MAX_STOP_PCT"],
+    ["Position size", "Risk 0.5% of equity per trade, never more than 5% of equity in one position, and never more than buying power allows.", "RISK_PER_TRADE_PCT, MAX_POSITION_PCT"],
+  ];
+  function gates() {
+    const box = $("#gates"); box.innerHTML = "";
+    GATES.forEach((g, i) => { const b = document.createElement("button"); b.className = "gate" + (i === gates.cur ? " on" : ""); b.textContent = g[0]; b.addEventListener("click", () => { gates.cur = i; gates(); }); box.appendChild(b); });
+    const g = GATES[gates.cur]; $("#gatecard").innerHTML = `<b style="font:600 18px var(--serif)">${g[0]}</b><p class="t" style="margin-top:6px">${g[1]}</p><div class="muted">Setting: <code>${g[2]}</code></div>`;
+    reportHeight();
+  }
+  gates.cur = 0;
+
+  /* ================================================================= road */
+  function road() {
+    const start = new Date(2026, 9, 2), days = 28, now = new Date(), done = Math.max(0, Math.floor((now - start) / 86400000) + 1), pct = Math.min(done / days, 1) * 100;
+    $("#prog").style.width = pct + "%";
+    $("#ticks").innerHTML = [[0, "Oct 2"], [(14 / days) * 100, "2 weeks"], [100, "4 weeks"]].map(([p, t]) => `<span style="left:${Math.min(Math.max(p, 4), 96)}%">${t}</span>`).join("");
+    $("#progtxt").textContent = done <= 0 ? "Starts October 2, 2026." : done > days ? `Day ${done}: the planned window is complete. Time to review the logs.` : `Day ${done} of up to ${days}. A decision on what earns a vote comes after two to four weeks.`;
+  }
+
+  const init = { machine() { buildMap(); $("#fire").addEventListener("click", fly); }, life() { drawSteps(); calc(); }, guard() { gates(); }, road, idea() { drawLab(); } };
+  init.life(); inited.life = true; init.guard(); inited.guard = true; init.road(); inited.road = true;
+  // deep link: #about-alphawave-<chapter>
+  const m = /about-alphawave-(\w+)/.exec(location.hash); if (m && $("#ch-" + m[1])) show(m[1]); else reportHeight();
+  window.__about = { show };
+})();
+</script>
+</body>
+</html>

@@ -20,10 +20,15 @@ def chart_html(payload: dict) -> str:
     return html.replace("/*__LIB__*/", lib.replace("</script", "<\\/script")).replace("__PAYLOAD__", data)
 
 
+def about_html() -> str:
+    """The self-contained 'About AlphaWave' page (story, concept, architecture)."""
+    return (STATIC / "about.html").read_text()
+
+
 BRIDGE = Path(__file__).resolve().parent / "chart_bridge"
 
 
-def chart_widget(html: str, key: str, height: int = 760):
+def chart_widget(html: str, key: str, height: int = 760, **extra):
     """Show the chart page and return what the user did on it (confirm / reject / apply), or None.
 
     A tiny Streamlit component v1 wraps the page so the lines dragged on the chart can talk back to Python.
@@ -34,7 +39,7 @@ def chart_widget(html: str, key: str, height: int = 760):
     global _component
     if _component is None:
         _component = components.declare_component("alphawave_chart", path=str(BRIDGE))
-    return _component(html=html, height=height, key=key, default=None)
+    return _component(html=html, height=height, key=key, default=None, **extra)
 
 
 _component = None

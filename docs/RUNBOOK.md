@@ -116,6 +116,9 @@ The scheduler needs a machine (or small VM) that stays awake and online all sess
 - **Right rail:** watchlist (price, change, sparkline, sentiment, confluence dots, fresh-signal badge), live news with sentiment chips + “Fetch latest”, and the decision feed (why each signal was taken or blocked).
 - **Tabs:** Scanner (confluence screen), Trades, Performance, Decision log, ML model card (shows when the model is *not* validated), System health, Settings (risk limits, kill switch).
 
+### About AlphaWave
+Click the AlphaWave logo in the top bar to jump to the About section at the bottom of the dashboard: the story, the idea, an animated architecture map, one trade's life with a sizing calculator, the guardrails and the road ahead. It is a static page (`src/dashboard/static/about.html`), so edit the wording there. The lab uses invented prices and the progress bar assumes a 28-day paper run from Oct 2.
+
 ## 5. Safety
 - **Kill switch:** `touch KILL_SWITCH` blocks all new orders immediately; `rm KILL_SWITCH` re-enables.
 - Positions are flattened 5 min before the close; no new entries in the last 15 min.

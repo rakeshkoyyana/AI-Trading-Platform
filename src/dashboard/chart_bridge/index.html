@@ -12,11 +12,12 @@
 (function () {
   const frame = document.getElementById("f");
   const send = (type, data) => window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type: type }, data), "*");
-  let lastHtml = null, seq = 0;
+  let lastHtml = null, seq = 0, autoH = 0, baseH = 760;
   window.addEventListener("message", function (ev) {
     const d = ev.data;
     if (!d) return;
     if (ev.source === frame.contentWindow) {
+      if (d.alphawave_height) { const h = Math.ceil(d.alphawave_height); if (h !== autoH) { autoH = h; send("streamlit:setFrameHeight", { height: h }); } return; }
       if (d.alphawave) {
         seq += 1;
         send("streamlit:setComponentValue", { value: Object.assign({ seq: Date.now() * 1000 + seq }, d.alphawave), dataType: "json" });
@@ -26,7 +27,21 @@
     if (d.type !== "streamlit:render") return;
     const a = d.args || {};
     if (a.html && a.html !== lastHtml) { lastHtml = a.html; frame.srcdoc = a.html; }
-    send("streamlit:setFrameHeight", { height: a.height || 760 });
+    baseH = a.height || 760;
+    if (!a.autoheight) autoH = 0;
+    send("streamlit:setFrameHeight", { height: (a.autoheight && autoH) || baseH });
+    if (a.brand_link && !window.__awBrand) {
+      window.__awBrand = true;
+      try {
+        window.parent.document.addEventListener("click", function (e) {
+          const t = e.target.closest && e.target.closest(".tp-brand");
+          if (!t) return;
+          e.preventDefault();
+          const el = window.parent.document.getElementById("about-alphawave");
+          if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+        }, true);
+      } catch (x) {}
+    }
   });
   send("streamlit:componentReady", { apiVersion: 1 });
   send("streamlit:setFrameHeight", { height: 760 });

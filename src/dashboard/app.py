@@ -30,7 +30,7 @@ from src.dashboard import brand
 from src.dashboard import data as D
 from src.dashboard import metrics as m
 from src.dashboard import theme as T
-from src.dashboard.chart_component import chart_html, chart_widget
+from src.dashboard.chart_component import about_html, chart_html, chart_widget
 from src.data_ingestion.backfill import latest_bar_time, load_bars
 from src.data_ingestion.on_demand import ensure_symbol_data
 from src.decision_engine import council
@@ -668,3 +668,8 @@ with tab_set:
             st.rerun()
         except OSError as exc:
             st.error(f"Could not change the kill switch file: {exc}")
+
+
+# ---- About AlphaWave (the topbar brand scrolls here)
+st.html('<div id="about-alphawave" style="scroll-margin-top:12px;height:1px"></div>')
+chart_widget(about_html(), key="about", height=1500, autoheight=True, brand_link=True)

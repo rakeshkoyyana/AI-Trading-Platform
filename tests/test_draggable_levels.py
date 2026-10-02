@@ -122,6 +122,22 @@ def test_modify_is_refused_when_the_stop_is_beyond_the_market_or_there_is_no_pos
     assert res and not res[0]["applied"] and "no open position" in res[0]["why"]
 
 
+def test_a_stop_only_position_shows_an_estimated_one_to_two_target(engine):
+    broker = SimBroker()
+    _open_position(engine, broker, tp=None)  # entry 100, stop 98 -> 1:2 target would be 104
+    pos = control.chart_levels(engine, "AAA")["positions"][0]
+    assert pos["target"] is None and pos["target_est"] == pytest.approx(104.0, abs=0.01)
+    with session_scope(engine) as s:
+        s.execute(select(Trade)).scalars().first().take_profit = 104.0
+    assert control.chart_levels(engine, "AAA")["positions"][0]["target_est"] is None  # a real order replaces the estimate
+
+
+def test_default_settings_put_a_one_to_two_take_profit_on_every_new_trade():
+    from src.config.settings import Settings as Cfg
+
+    assert Cfg().exit_mode == "hybrid" and Cfg().target_rr == 2.0
+
+
 def test_chart_levels_lists_proposals_and_positions_for_the_symbol(engine):
     _pending(engine)
     _open_position(engine, SimBroker())

@@ -76,6 +76,14 @@ class Broker(ABC):
     @abstractmethod
     def close_position(self, symbol: str) -> OrderResult | None: ...
 
+    def protected_symbols(self) -> set[str] | None:
+        """Symbols that currently have a resting stop order at the broker (None = this broker cannot tell)."""
+        return None
+
+    def last_exit_fill(self, symbol: str, direction: str, after=None) -> tuple[float, str] | None:
+        """(price, kind) of the latest filled exit order for a position, kind in {'stop','target','market'}; None if unknown."""
+        return None
+
     def get_account_equity(self) -> float:
         return self.get_account().equity
 

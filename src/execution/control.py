@@ -186,3 +186,16 @@ def open_positions(engine) -> list[dict]:
         rows = sx.execute(select(Trade).where(Trade.status.in_(["open", "filled"])).order_by(Trade.id)).scalars()
         return [dict(symbol=t.symbol, direction=t.direction, qty=t.qty, entry=t.entry_price,
                      stop=t.stop_loss, target=t.take_profit) for t in rows]
+
+
+def change_signature(engine) -> tuple:
+    """Cheap fingerprint of everything the dashboard shows that other processes change (trades, approvals, closes).
+    The dashboard polls it every few seconds and redraws the whole page the moment it differs."""
+    from sqlalchemy import func
+
+    with session_scope(engine) as sx:
+        trades = sx.execute(select(Trade.id, Trade.status, Trade.exit_price)).all()
+        pend = sx.execute(select(PendingOrder.id, PendingOrder.status)).all()
+        closes = sx.execute(select(CloseRequest.id, CloseRequest.status)).all()
+        modes = sx.execute(select(TickerMode.symbol, TickerMode.mode)).all()
+    return (tuple(map(tuple, trades)), tuple(map(tuple, pend)), tuple(map(tuple, closes)), tuple(map(tuple, modes)))

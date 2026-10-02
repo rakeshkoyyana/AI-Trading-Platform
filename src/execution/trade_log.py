@@ -77,10 +77,10 @@ def reconcile(engine, broker: Broker, notify: Callable[[str, str], object] | Non
 
     with session_scope(engine) as s:
         open_trades = list(s.execute(select(Trade).where(Trade.status.in_(["open", "filled"]))).scalars())
-        snapshot = [(t.id, t.symbol, t.broker_order_id, t.status, t.direction, t.entry_price, t.qty) for t in open_trades]
+        snapshot = [(t.id, t.symbol, t.broker_order_id, t.status, t.direction, t.entry_price, t.qty, t.entry_time) for t in open_trades]
 
     tracked = set()
-    for tid, sym, oid, status, direction, entry_px, qty in snapshot:
+    for tid, sym, oid, status, direction, entry_px, qty, entry_time in snapshot:
         tracked.add(sym)
         order = broker.get_order(oid) if oid else None
 
@@ -105,6 +105,10 @@ def reconcile(engine, broker: Broker, notify: Callable[[str, str], object] | Non
             leg = next((l for l in order.legs if l.status == "filled" and l.filled_avg_price), None)
             if leg:
                 close_trade(engine, tid, leg.filled_avg_price, f"exit via {'stop' if _is_stop(leg) else 'target'} leg")
+                continue
+            got = broker.last_exit_fill(sym, direction, after=entry_time)
+            if got:
+                close_trade(engine, tid, got[0], f"exit via {got[1]} (from broker fills)")
                 continue
             issues.append(f"{sym}: position gone at broker with no filled exit leg (closed manually?)")
             close_trade(engine, tid, entry_px or 0.0, "closed externally; exit price unknown")

@@ -347,6 +347,34 @@ class TradingCycle:
         except Exception as exc:  # noqa: BLE001
             alerts.log_event("council", f"{sym}: shadow council failed: {exc}", self.engine)
 
+    # ------------------------------------------------- fast reconcile + stop watch
+    def quick_reconcile(self, now: datetime | None = None) -> list[str]:
+        """Every ~30 s while a position is open: book stop / target fills as they happen and verify each position
+        still has its protective stop resting at the broker (the stop itself lives at the broker and needs no scheduler)."""
+        from sqlalchemy import func
+
+        with session_scope(self.engine) as sx:
+            n_open = sx.execute(select(func.count()).select_from(Trade).where(Trade.status.in_(["open", "filled"]))).scalar()
+        warned = self.__dict__.setdefault("_unprotected", set())
+        if not n_open:
+            warned.clear()
+            return []
+        issues = reconcile(self.engine, self.broker, None)
+        seen = self.__dict__.setdefault("_seen_issues", set())
+        for msg in issues:
+            if msg not in seen:
+                seen.add(msg)
+                self.notify("Reconciliation mismatch:\n" + msg, "warning")
+        prot = self.broker.protected_symbols()
+        if prot is not None:
+            held = {p.symbol for p in self.broker.get_positions() if p.qty}
+            missing = held - prot
+            for sym in sorted(missing - warned):
+                self.notify(f"{sym}: NO protective stop is resting at the broker - check Alpaca now", "error")
+            warned.clear()
+            warned.update(missing)
+        return issues
+
     # ------------------------------------------------------- manual closes
     def _exit_price(self, res, sym: str) -> float | None:
         """Fill price of a just-sent market close. The broker often answers before the fill, so poll the order briefly,
@@ -480,9 +508,11 @@ def build_scheduler(cycle: TradingCycle):
                   CronTrigger(day_of_week=dow, hour=f"{sh}-{eh - 1}", minute=_cron_minutes(cycle.tf_min, s.live_delay_minutes),
                               second=s.bar_delay_seconds, timezone=tz),
                   id="cycle", max_instances=1, coalesce=True, misfire_grace_time=120)
-    sched.add_job(cycle.process_approvals, IntervalTrigger(seconds=10, timezone=tz), id="approvals",
+    sched.add_job(cycle.process_approvals, IntervalTrigger(seconds=2, timezone=tz), id="approvals",
                   max_instances=1, coalesce=True)
-    sched.add_job(cycle.process_closes, IntervalTrigger(seconds=5, timezone=tz), id="closes",
+    sched.add_job(cycle.process_closes, IntervalTrigger(seconds=2, timezone=tz), id="closes",
+                  max_instances=1, coalesce=True)
+    sched.add_job(cycle.quick_reconcile, IntervalTrigger(seconds=30, timezone=tz), id="reconcile",
                   max_instances=1, coalesce=True)
     sched.add_job(cycle.maybe_flatten, CronTrigger(day_of_week=dow, hour=f"{sh}-{eh}", minute="*", timezone=tz),
                   id="flatten", max_instances=1, coalesce=True)

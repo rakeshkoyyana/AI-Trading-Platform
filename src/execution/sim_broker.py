@@ -130,6 +130,9 @@ class SimBroker(Broker):
     def get_order(self, order_id: str) -> OrderResult | None:
         return self.orders.get(order_id)
 
+    def protected_symbols(self) -> set[str] | None:
+        return {b.symbol for b in self.brackets if b.symbol in self.positions}
+
     def get_positions(self) -> list[Position]:
         out = []
         for p in self.positions.values():

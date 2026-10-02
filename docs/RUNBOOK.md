@@ -67,7 +67,12 @@ Size = 0.5% of equity risked / stop distance, capped at 5% of equity.
 early and cancels the bracket. That runs for every mode (even Off).
 Other values: `EXIT_MODE=pine` = stop + Pine exits only; `EXIT_MODE=bracket` = stop + structural target only.
 
-**Close button:** Trade control lists open positions; **Close SYMBOL** then **Confirm** queues a market close. The scheduler sends it within ~5 s
+**Speed and safety:** the stop (and target) are sent to Alpaca *with* the entry and rest at the broker, so they trigger and fill at the
+exchange with no help from this app. The scheduler books stop/target fills every 30 s, picks up approvals and Close clicks every 2 s, and
+warns (Discord + dashboard events) if an open position ever has no resting stop. The dashboard redraws by itself whenever a trade,
+approval or close changes; no manual refresh.
+
+**Close button:** Trade control lists open positions; **Close SYMBOL** then **Confirm** queues a market close. The scheduler sends it within ~2 s
 (only while the market is open; a request it does not pick up within 2 minutes expires so it can't fire later by surprise).
 
 ### Any ticker, loaded on demand

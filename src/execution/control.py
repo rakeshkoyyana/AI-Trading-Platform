@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 
 from src.config import Settings, get_settings
-from src.db.schema import CloseRequest, PendingOrder, TickerMode, Trade, session_scope
+from src.db.schema import CloseRequest, ModifyRequest, PendingOrder, TickerMode, Trade, session_scope
 from src.decision_engine.engine import Decision
 
 MODES = ("off", "ask", "auto")
@@ -198,4 +198,117 @@ def change_signature(engine) -> tuple:
         pend = sx.execute(select(PendingOrder.id, PendingOrder.status)).all()
         closes = sx.execute(select(CloseRequest.id, CloseRequest.status)).all()
         modes = sx.execute(select(TickerMode.symbol, TickerMode.mode)).all()
-    return (tuple(map(tuple, trades)), tuple(map(tuple, pend)), tuple(map(tuple, closes)), tuple(map(tuple, modes)))
+    with session_scope(engine) as sx:
+        mods = sx.execute(select(ModifyRequest.id, ModifyRequest.status)).all()
+        levels = sx.execute(select(PendingOrder.id, PendingOrder.stop_loss, PendingOrder.take_profit)).all()
+        tlevels = sx.execute(select(Trade.id, Trade.stop_loss, Trade.take_profit)).all()
+    return (tuple(map(tuple, trades)), tuple(map(tuple, pend)), tuple(map(tuple, closes)), tuple(map(tuple, modes)),
+            tuple(map(tuple, mods)), tuple(map(tuple, levels)), tuple(map(tuple, tlevels)))
+
+
+# ------------------------------------------------------- draggable SL / TP
+MAX_WIDEN = 2.0  # a stop may be dragged at most this many times farther than the engine's original stop (tightening is always fine)
+MIN_STOP_PCT = 0.0005  # and never closer than 0.05% of price (it would trigger on noise)
+
+
+def validate_levels(direction: str, ref: float, stop: float | None, target: float | None, orig_stop: float | None,
+                    settings: Settings | None = None) -> tuple[bool, str]:
+    """Is (stop, target) a sane pair for a `direction` trade around reference price `ref`?"""
+    s = settings or get_settings()
+    long = direction == "long"
+    if ref is None or ref <= 0:
+        return False, "no reference price"
+    if stop is not None:
+        if (long and stop >= ref) or (not long and stop <= ref):
+            return False, f"stop {stop:.2f} must be {'below' if long else 'above'} {ref:.2f} for a {direction}"
+        dist = abs(ref - stop)
+        if dist / ref > s.max_stop_pct:
+            return False, f"stop {dist / ref:.1%} away is wider than the {s.max_stop_pct:.0%} limit"
+        if dist / ref < MIN_STOP_PCT:
+            return False, "stop is too close to the price"
+        if orig_stop is not None and abs(ref - orig_stop) > 0 and dist > MAX_WIDEN * abs(ref - orig_stop):
+            return False, f"stop can be widened to at most {MAX_WIDEN:g}x its original distance"
+    if target is not None and ((long and target <= ref) or (not long and target >= ref)):
+        return False, f"target {target:.2f} must be {'above' if long else 'below'} {ref:.2f} for a {direction}"
+    return True, ""
+
+
+def update_pending_levels(engine, pending_id: int, stop: float | None, target: float | None,
+                          settings: Settings | None = None, now: datetime | None = None) -> tuple[bool, str]:
+    """Change the stop / target of a still-pending proposal (what Approve will then send)."""
+    now = now or _utcnow()
+    with session_scope(engine) as sx:
+        row = sx.get(PendingOrder, pending_id)
+        if row is None or row.status != "pending" or row.expires_at <= now:
+            return False, "that request is no longer waiting for approval"
+        ok, why = validate_levels(row.direction, row.entry, stop, target if row.take_profit else None, row.stop_loss, settings)
+        if not ok:
+            return False, why
+        if stop is not None:
+            row.stop_loss = round(float(stop), 2)
+        if target is not None and row.take_profit is not None:
+            row.take_profit = round(float(target), 2)
+        return True, ""
+
+
+def request_modify(engine, symbol: str, stop: float | None, target: float | None, now: datetime | None = None,
+                   settings: Settings | None = None) -> tuple[int | None, str]:
+    """Queue new stop / target for an open position (validated now and again when the scheduler applies it)."""
+    symbol = symbol.upper()
+    with session_scope(engine) as sx:
+        t = sx.execute(select(Trade).where(Trade.symbol == symbol, Trade.status.in_(["open", "filled"]))
+                       .order_by(Trade.id.desc())).scalars().first()
+        if t is None:
+            return None, "no open position for this ticker"
+        ref = t.entry_price
+        ok, why = validate_levels(t.direction, ref, stop, target if t.take_profit else None, t.stop_loss, settings)
+        if not ok:
+            return None, why
+        row = ModifyRequest(created_at=now or _utcnow(), symbol=symbol, stop=stop, target=target, status="pending")
+        sx.add(row)
+        sx.flush()
+        return row.id, ""
+
+
+def list_modify_requests(engine, status: str | None = "pending") -> list[ModifyRequest]:
+    with session_scope(engine) as sx:
+        q = select(ModifyRequest).order_by(ModifyRequest.created_at.desc())
+        if status:
+            q = q.where(ModifyRequest.status == status)
+        rows = list(sx.execute(q).scalars())
+        sx.expunge_all()
+    return rows
+
+
+def mark_modify(engine, req_id: int, status: str, note: str = "") -> None:
+    with session_scope(engine) as sx:
+        row = sx.get(ModifyRequest, req_id)
+        if row is not None:
+            row.status, row.note = status, (note or None)
+
+
+def expire_modify_requests(engine, now: datetime | None = None) -> int:
+    cutoff = (now or _utcnow()) - timedelta(seconds=CLOSE_TTL_SECONDS)
+    n = 0
+    with session_scope(engine) as sx:
+        for row in sx.execute(select(ModifyRequest).where(ModifyRequest.status == "pending",
+                                                          ModifyRequest.created_at <= cutoff)).scalars():
+            row.status, row.note = "expired", "scheduler did not pick it up in time (is it running?)"
+            n += 1
+    return n
+
+
+def chart_levels(engine, symbol: str, now: datetime | None = None) -> dict:
+    """What the chart draws for `symbol`: proposals waiting for approval and open positions, with their stop / target."""
+    now = now or _utcnow()
+    symbol = symbol.upper()
+    pend = [dict(id=p.id, direction=p.direction, qty=p.qty, entry=p.entry, stop=p.stop_loss, target=p.take_profit,
+                 expires=p.expires_at.isoformat() if p.expires_at else None)
+            for p in list_pending(engine, "pending") if p.symbol == symbol and p.expires_at > now and p.entry]
+    waiting = {m.symbol for m in list_modify_requests(engine, "pending")}
+    with session_scope(engine) as sx:
+        rows = list(sx.execute(select(Trade).where(Trade.symbol == symbol, Trade.status.in_(["open", "filled"]))).scalars())
+        pos = [dict(id=t.id, direction=t.direction, qty=t.qty, entry=t.entry_price, stop=t.stop_loss, target=t.take_profit,
+                    t0=int(t.entry_time.replace(tzinfo=timezone.utc).timestamp()) if t.entry_time else None,
+                    updating=symbol in waiting) for t in rows if t.entry_price]
+    return dict(pending=pend, positions=pos)

@@ -168,6 +168,21 @@ class CloseRequest(Base):
     note: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
 
+class ModifyRequest(Base):
+    """New stop / target for an OPEN position, dragged on the chart; the scheduler (which owns the broker) applies it."""
+
+    __tablename__ = "modify_requests"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    stop: Mapped[float | None] = mapped_column(Float, nullable=True)
+    target: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # pending | done | failed | expired
+    status: Mapped[str] = mapped_column(String(10), default="pending", index=True)
+    note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+
 class CouncilVote(Base):
     """Shadow analyst-council votes for a fresh signal. Logged beside the real decision; never changes it."""
 

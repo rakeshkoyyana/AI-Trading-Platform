@@ -115,6 +115,41 @@ class AlpacaBroker(Broker):
         except Exception:  # noqa: BLE001
             return None
 
+    def modify_exit_levels(self, symbol, stop, target):
+        try:
+            from alpaca.trading.enums import QueryOrderStatus
+            from alpaca.trading.requests import GetOrdersRequest, ReplaceOrderRequest
+
+            pos = next((p for p in self.get_positions() if p.symbol == symbol and p.qty), None)
+            if pos is None:
+                return False, "no open position at the broker"
+            exit_side = "sell" if pos.qty > 0 else "buy"
+            stop_leg = tp_leg = None
+            for o in self.client.get_orders(GetOrdersRequest(status=QueryOrderStatus.OPEN, symbols=[symbol], nested=True, limit=100)):
+                for x in [o, *(getattr(o, "legs", None) or [])]:
+                    r = _result(x)
+                    if r.symbol != symbol or r.side != exit_side or r.status not in self._LIVE:
+                        continue
+                    if r.order_type in {"stop", "stop_limit"} and stop_leg is None:
+                        stop_leg = r
+                    elif r.order_type == "limit" and tp_leg is None:
+                        tp_leg = r
+            msgs = []
+            if stop is not None:
+                if stop_leg is None:
+                    return False, "no resting stop order found at the broker"
+                self.client.replace_order_by_id(stop_leg.id, ReplaceOrderRequest(stop_price=round(float(stop), 2)))
+                msgs.append(f"stop -> {float(stop):.2f}")
+            if target is not None:
+                if tp_leg is None:
+                    msgs.append("target NOT changed (this trade has no take-profit order)")
+                else:
+                    self.client.replace_order_by_id(tp_leg.id, ReplaceOrderRequest(limit_price=round(float(target), 2)))
+                    msgs.append(f"target -> {float(target):.2f}")
+            return True, "; ".join(msgs)
+        except Exception as exc:  # noqa: BLE001
+            return False, f"broker refused: {str(exc)[:200]}"
+
     def last_exit_fill(self, symbol, direction, after=None):
         try:
             from datetime import timezone

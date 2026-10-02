@@ -375,6 +375,51 @@ class TradingCycle:
             warned.update(missing)
         return issues
 
+    # ------------------------------------------------ chart-dragged stop / target
+    def process_modifies(self, now: datetime | None = None) -> list[dict]:
+        """Apply stop / target changes dragged on the chart to the open position's resting orders at the broker."""
+        now = now or utc_now()
+        results: list[dict] = []
+        control.expire_modify_requests(self.engine, now)
+        reqs = control.list_modify_requests(self.engine, "pending")
+        if not reqs:
+            return results
+        positions = {p.symbol: p for p in self.broker.get_positions()}
+        for r in sorted(reqs, key=lambda x: x.created_at):  # oldest first, so the newest drag wins
+            pos = positions.get(r.symbol)
+            if pos is None or not pos.qty:
+                control.mark_modify(self.engine, r.id, "failed", "no open position at the broker")
+                results.append(dict(id=r.id, symbol=r.symbol, applied=False, why="no open position at the broker"))
+                continue
+            with session_scope(self.engine) as sx:
+                t = sx.execute(select(Trade).where(Trade.symbol == r.symbol, Trade.status.in_(["open", "filled"]))
+                               .order_by(Trade.id.desc())).scalars().first()
+                old_stop, old_tp, tid = (t.stop_loss, t.take_profit, t.id) if t else (None, None, None)
+            ref = pos.market_price or pos.avg_entry_price
+            ok, why = control.validate_levels(pos.direction, ref, r.stop, r.target if old_tp else None, old_stop, self.s)
+            if not ok:
+                control.mark_modify(self.engine, r.id, "failed", why)
+                self.notify(f"{r.symbol}: stop/target change NOT applied - {why}", "warning")
+                results.append(dict(id=r.id, symbol=r.symbol, applied=False, why=why))
+                continue
+            ok, msg = self.broker.modify_exit_levels(r.symbol, r.stop, r.target)
+            if not ok:
+                control.mark_modify(self.engine, r.id, "failed", msg)
+                self.notify(f"{r.symbol}: stop/target change FAILED - {msg}", "error")
+                results.append(dict(id=r.id, symbol=r.symbol, applied=False, why=msg))
+                continue
+            with session_scope(self.engine) as sx:
+                t = sx.get(Trade, tid) if tid else None
+                if t is not None:
+                    if r.stop is not None:
+                        t.stop_loss = round(float(r.stop), 2)
+                    if r.target is not None and t.take_profit is not None:
+                        t.take_profit = round(float(r.target), 2)
+            control.mark_modify(self.engine, r.id, "done", msg)
+            self.notify(f"MODIFY {r.symbol}: {msg} (was stop {old_stop}, target {old_tp})", "trade")
+            results.append(dict(id=r.id, symbol=r.symbol, applied=True))
+        return results
+
     # ------------------------------------------------------- manual closes
     def _exit_price(self, res, sym: str) -> float | None:
         """Fill price of a just-sent market close. The broker often answers before the fill, so poll the order briefly,
@@ -511,6 +556,8 @@ def build_scheduler(cycle: TradingCycle):
     sched.add_job(cycle.process_approvals, IntervalTrigger(seconds=2, timezone=tz), id="approvals",
                   max_instances=1, coalesce=True)
     sched.add_job(cycle.process_closes, IntervalTrigger(seconds=2, timezone=tz), id="closes",
+                  max_instances=1, coalesce=True)
+    sched.add_job(cycle.process_modifies, IntervalTrigger(seconds=2, timezone=tz), id="modifies",
                   max_instances=1, coalesce=True)
     sched.add_job(cycle.quick_reconcile, IntervalTrigger(seconds=30, timezone=tz), id="reconcile",
                   max_instances=1, coalesce=True)

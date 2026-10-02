@@ -80,6 +80,10 @@ class Broker(ABC):
         """Symbols that currently have a resting stop order at the broker (None = this broker cannot tell)."""
         return None
 
+    def modify_exit_levels(self, symbol: str, stop: float | None, target: float | None) -> tuple[bool, str]:
+        """Move the resting stop / take-profit orders of an open position. Returns (ok, message)."""
+        return False, "this broker cannot modify exit orders"
+
     def last_exit_fill(self, symbol: str, direction: str, after=None) -> tuple[float, str] | None:
         """(price, kind) of the latest filled exit order for a position, kind in {'stop','target','market'}; None if unknown."""
         return None

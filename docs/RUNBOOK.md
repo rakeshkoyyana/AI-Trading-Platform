@@ -72,6 +72,14 @@ exchange with no help from this app. The scheduler books stop/target fills every
 warns (Discord + dashboard events) if an open position ever has no resting stop. The dashboard redraws by itself whenever a trade,
 approval or close changes; no manual refresh.
 
+**Drag the lines (like TradingView's position tool):** a trade waiting for approval and every open position is drawn on the chart
+with its entry, a red stop line and a green target line (labels show the $ risk, $ reward and R:R). Grab a line and drag it.
+- *Waiting for approval:* drag SL / TP, then **✔ Confirm trade** on the chart: your levels replace the proposed ones and the trade is
+  approved in one step (**✖ Reject** declines it). The Approve button below uses your edited levels too.
+- *Open position:* drag, then **✔ Apply to broker**; the scheduler moves the resting stop / take-profit orders within ~2 s.
+  Nothing is sent just by dragging. A stop may be tightened freely but widened to at most 2x its original distance, must stay on the loss side
+  of the market price, and within `MAX_STOP_PCT`. A trade opened without a take-profit order (`EXIT_MODE=pine`) only has a draggable stop.
+
 **Close button:** Trade control lists open positions; **Close SYMBOL** then **Confirm** queues a market close. The scheduler sends it within ~2 s
 (only while the market is open; a request it does not pick up within 2 minutes expires so it can't fire later by surprise).
 

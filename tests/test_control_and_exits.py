@@ -324,3 +324,30 @@ def test_close_request_queue_dedupes_and_expires(tmp_path):
     assert control.expire_close_requests(eng, now + timedelta(seconds=control.CLOSE_TTL_SECONDS + 1)) == 1
     assert control.list_close_requests(eng, "pending") == []
     assert control.list_close_requests(eng, "expired")[0].symbol == "ASTS"
+
+
+def test_manual_close_closes_the_trade_even_when_the_fill_price_is_not_back_yet(world, monkeypatch):
+    import dataclasses as dc
+
+    import src.scheduler.run_loop as rl
+
+    monkeypatch.setattr(rl.time, "sleep", lambda *_: None)
+    c = world["make"](dc.replace(S, default_trade_mode="auto"))
+    for _out, now in _replay(world, c, start=380, step=2):
+        if world["broker"].get_positions():
+            break
+    sym = world["broker"].get_positions()[0].symbol
+    real_close = world["broker"].close_position
+
+    def close_without_fill(s):
+        res = real_close(s)
+        return dc.replace(res, filled_avg_price=None) if res else res
+
+    monkeypatch.setattr(world["broker"], "close_position", close_without_fill)
+    monkeypatch.setattr(world["broker"], "get_order", lambda oid: None)
+    control.request_close(world["engine"], sym)
+    res = c.process_closes(now=datetime.utcnow(), force=True)
+    assert res and res[0]["closed"], res
+    with session_scope(world["engine"]) as s:
+        t = s.execute(select(Trade).where(Trade.symbol == sym).order_by(Trade.id.desc())).scalars().first()
+    assert t.status == "closed" and t.exit_price and t.exit_price > 0, "trade must not stay open or get a 0 exit"

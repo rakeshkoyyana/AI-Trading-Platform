@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 import traceback
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -26,7 +27,7 @@ from src.data_ingestion import get_bars_with_fallback
 from src.data_ingestion.backfill import backfill, load_bars
 from src.data_ingestion.common import TIMEFRAME_MINUTES
 from src.data_ingestion.live_tail import with_live_tail
-from src.db.schema import ModelPrediction, Trade, get_engine, init_db, session_scope
+from src.db.schema import Bar, ModelPrediction, Trade, get_engine, init_db, session_scope
 from src.decision_engine import council
 from src.decision_engine.engine import AccountState, Decision, pine_exit_reason, should_trade
 from src.execution import control
@@ -347,6 +348,29 @@ class TradingCycle:
             alerts.log_event("council", f"{sym}: shadow council failed: {exc}", self.engine)
 
     # ------------------------------------------------------- manual closes
+    def _exit_price(self, res, sym: str) -> float | None:
+        """Fill price of a just-sent market close. The broker often answers before the fill, so poll the order briefly,
+        then fall back to the latest known price (never leave the trade open or book it at the entry price)."""
+        px = res.filled_avg_price
+        for _ in range(6):
+            if px:
+                return float(px)
+            time.sleep(1.0)
+            o = self.broker.get_order(res.id) if res.id else None
+            px = o.filled_avg_price if o else None
+        if px:
+            return float(px)
+        if self.price_fn:
+            try:
+                p = self.price_fn(sym)
+                if p:
+                    return float(p)
+            except Exception:  # noqa: BLE001
+                pass
+        with session_scope(self.engine) as sx:
+            bar = sx.execute(select(Bar).where(Bar.symbol == sym).order_by(Bar.timestamp.desc())).scalars().first()
+            return float(bar.close) if bar else None
+
     def process_closes(self, now: datetime | None = None, force: bool = False) -> list[dict]:
         """Execute 'Close position' clicks from the dashboard (market close + cancel the protective orders)."""
         now = now or utc_now()
@@ -374,7 +398,7 @@ class TradingCycle:
                 self.notify(f"{r.symbol}: manual close FAILED - check the broker", "error")
                 results.append(dict(id=r.id, symbol=r.symbol, closed=False))
                 continue
-            px = res.filled_avg_price or (self.price_fn(r.symbol) if self.price_fn else None)
+            px = self._exit_price(res, r.symbol)
             if tid and px:
                 close_trade(self.engine, tid, px, "Manual close from dashboard")
             control.mark_close(self.engine, r.id, "done", f"closed ~{px:.2f}" if px else "close order sent")

@@ -14,7 +14,7 @@ from sqlalchemy import select
 
 from src.config import get_settings
 from src.data_ingestion.backfill import load_bars
-from src.db.schema import Signal, get_engine, init_db, session_scope
+from src.db.schema import ModelPrediction, Signal, Trade, get_engine, init_db, session_scope
 from src.smc_logic.label import label_signals
 from src.smc_logic.pipeline import FEATURE_COLS, compute_context
 
@@ -111,6 +111,15 @@ def backfill_signals(
                     )
                 ).scalars()
             }
+            # Signals stored earlier that the current bars no longer produce (e.g. after the data feed changed
+            # from IEX to SIP) would poison training; drop them unless a trade or prediction refers to them.
+            fresh = {r["timestamp"] for r in rows}
+            first_ts = bars["timestamp"].iat[0].to_pydatetime()
+            used = set(s.execute(select(Trade.signal_id).where(Trade.signal_id.is_not(None))).scalars()) | set(
+                s.execute(select(ModelPrediction.signal_id).where(ModelPrediction.signal_id.is_not(None))).scalars())
+            for ts, sg in existing.items():
+                if ts >= first_ts and ts not in fresh and sg.id not in used:
+                    s.delete(sg)
             for r in rows:
                 sg = existing.get(r["timestamp"])
                 if sg is None:

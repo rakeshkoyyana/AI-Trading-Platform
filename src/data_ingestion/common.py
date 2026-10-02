@@ -1,6 +1,8 @@
 """Shared helpers so Alpaca and yfinance loaders return the identical shape."""
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 import pandas as pd
 
 BAR_COLUMNS = ["timestamp", "open", "high", "low", "close", "volume"]
@@ -54,3 +56,17 @@ def regular_hours_mask(ts_utc_naive: pd.Series, timeframe: str) -> pd.Series:
     mins = et.dt.hour * 60 + et.dt.minute
     start = 9 * 60 if TIMEFRAME_MINUTES.get(timeframe, 15) >= 60 else 9 * 60 + 30
     return (mins >= start) & (mins < 16 * 60)
+
+
+def effective_end(end: datetime | None, delay_minutes: int, now: datetime | None = None) -> datetime:
+    """Latest instant we may ask a provider for: `end` (default now), but never later than now - delay.
+
+    The free SIP plan refuses/omits the most recent 15 minutes, so requests are clamped to the data horizon.
+    """
+    now = now or datetime.now(timezone.utc)
+    limit = now - timedelta(minutes=max(delay_minutes, 0))
+    if end is None:
+        return limit
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=timezone.utc)
+    return min(end, limit)

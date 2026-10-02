@@ -61,7 +61,7 @@ def seed_demo_news(engine, symbols, hours: int = 48, seed: int = 5) -> int:
 
 def replay(db_url: str, symbols: list[str], days: int = 8, history_days: int = 40, seed: int = 3,
            equity: float = 100_000.0, settings=None, quiet: bool = True) -> dict:
-    s = dataclasses.replace(settings or get_settings(), tickers=symbols)
+    s = dataclasses.replace(settings or get_settings(), tickers=symbols, sip_delay_minutes=0)  # the simulated feed has no delay
     path = Path(db_url.replace("sqlite:///", "", 1))
     if path.exists():
         path.unlink()  # a demo DB is always rebuilt from scratch

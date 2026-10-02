@@ -1,4 +1,4 @@
-# Runbook — from clone to a 2–4 week paper run
+# AlphaWave runbook — from clone to a 2–4 week paper run
 
 All commands run from the repo root with the venv active. Defaults are **paper trading only**.
 
@@ -13,13 +13,30 @@ pytest -q                   # ~100 s, fully offline
 
 ## 2. Data -> signals -> model (run once, then weekly)
 ```bash
-python -m src.data_ingestion.backfill --months 12        # bars for every ticker
+python -m src.data_ingestion.backfill --months 12        # bars for every trade ticker (SIP feed, see below)
 python -m src.data_ingestion.backfill --timeframe 5Min --months 2   # optional: only the dashboard's 5m chart needs these
 python -m src.smc_logic.backfill_signals                  # signals + win/loss labels
 python -m src.ml.train                                    # walk-forward eval; saves models/ + MODEL_LOG.md
 ```
 Read `MODEL_LOG.md` honestly: if out-of-sample precision/lift is not better than the raw signal,
 **do not trust the filter** — keep `REQUIRE_MODEL=false` and let paper trading collect evidence.
+
+### Data feed: SIP (default) vs IEX
+`ALPACA_DATA_FEED=sip` pulls the **consolidated tape** (all US exchanges): the same prices and volume TradingView shows,
+and the full pre/post-market session, so signals line up with a TradingView chart. IEX is one exchange only (about 2 % of the
+volume, and most extended-hours bars are missing), which makes the volume-spike confirmation fire differently.
+
+The free Alpaca plan serves SIP only for data **older than 15 minutes**, so `SIP_DELAY_MINUTES=16` is applied everywhere:
+the scheduler fires 16 minutes after each bar closes (:16, :31, :46, :01), uses only bars inside that horizon, and a signal
+therefore reaches the broker about 16 minutes after its bar closed (the paper trade log shows the cost: compare each
+fill with the signal bar's close). With a real-time SIP subscription set `SIP_DELAY_MINUTES=0`. `ALPACA_DATA_FEED=iex`
+restores real-time single-exchange data. Re-running `backfill` **overwrites** stored bars, so switching feeds is
+`backfill` -> `backfill_signals` (drops signals the new bars no longer produce) -> `train`.
+
+### Any ticker, loaded on demand
+The dashboard search box covers every exchange-listed US stock/ETF (symbol list from Alpaca, cached a day). Opening a symbol
+pulls its history once (12 months of 15m, 2 months of 5m) and later only tops up the newest bars; star it to keep it in
+`data/watchlist.json` (max 12). Research symbols are never traded: the scheduler trades only `TICKERS`.
 
 ## 3. Validate the SMC port against TradingView (Phase 2 gate)
 See `docs/TRADINGVIEW_VALIDATION.md`: add `docs/tradingview_export_patch.pine` to your Pine script, export
@@ -40,7 +57,7 @@ The scheduler needs a machine (or small VM) that stays awake and online all sess
 ## Dashboard guide
 `streamlit run src/dashboard/app.py` (auto-refreshes every 30 s; change in the sidebar).
 - **Top bar + tape:** paper/live badge, market-window state, kill-switch flag, and a scrolling tape of prices + FinBERT-scored headlines.
-- **Chart (TradingView-style):** crosshair with OHLCV/EMA/RSI legend, scroll-zoom/drag-pan, 5m/15m/30m/1H/2H/4H/1D (each timeframe computes its own signals and SMC zones, like a TradingView chart of that timeframe; 2H/4H/1H buckets follow the sessions: 09:30 regular, 04:00 pre-market, 16:00 after-hours), volume + RSI panes, log scale, magnet crosshair, fullscreen.
+- **Chart (TradingView-style):** crosshair with OHLCV/EMA/RSI legend, purple **Strategy fills** (the Pine strategy's own orders: Buy/Sell entries, closes when RSI crosses 70/30 or the EMA trend flips, reversals; captions appear when zoomed in), scroll-zoom/drag-pan, 5m/15m/30m/1H/2H/4H/1D (each timeframe computes its own signals and SMC zones, like a TradingView chart of that timeframe; 2H/4H/1H buckets follow the sessions: 09:30 regular, 04:00 pre-market, 16:00 after-hours), volume + RSI panes, log scale, magnet crosshair, fullscreen.
   SMC overlays (toggle each): order blocks, FVG, BOS/CHoCH (swing), internal structure, swing levels, premium/discount, EQH/EQL, signals, your trades, SL/TP lines.
   Drawing tools: H-line, trend line, box, measure (Δprice, %, bars, time); drawings persist per symbol in your browser. `Esc` cancels a tool.
 - **Match the chart to TradingView:** the sidebar toggle “Include extended-hours bars” (and `INCLUDE_EXTENDED_HOURS` in `.env`) must equal your TradingView chart’s Extended-hours setting.

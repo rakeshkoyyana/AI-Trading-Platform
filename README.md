@@ -1,4 +1,6 @@
-# SMC Trading Agent — AI-Powered Smart Money Concepts Trading Bot
+# AlphaWave — AI-Powered Smart Money Concepts Trading Platform
+
+<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/brand/alphawave-lockup-dark.png"><img src="assets/brand/alphawave-lockup-light.png" alt="AlphaWave" height="64"></picture></p>
 
 An automated trading agent that ports an existing Pine Script "triple confirmation" SMC (Smart Money Concepts) strategy to Python, layers a machine-learning win-probability filter and live news sentiment on top of it, executes trades automatically on a market-hours schedule, and reports everything on a live dashboard.
 

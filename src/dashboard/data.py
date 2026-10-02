@@ -25,6 +25,7 @@ MIN_CTX_BARS = 120  # below this the SMC context is mostly warm-up noise, so no 
 # bars shown per timeframe (the context is always computed on everything we have, for warm-up)
 DISPLAY_BARS = {"5Min": 4500, "15Min": 2600, "30Min": 1800, "1Hour": 1500}
 UP, DOWN, ACCENT, AMBER, MUTED = "#26a69a", "#ef5350", "#6c8cff", "#f5b041", "#8a90ab"
+PURPLE = "#b061ff"  # strategy order fills (TradingView draws these for strategy() scripts)
 
 
 def _epoch(ts) -> int:
@@ -190,6 +191,55 @@ def smc_overlays(ctx: pd.DataFrame) -> dict:
     return dict(zones=zones, segs=segs, markers=markers)
 
 
+def strategy_fills(df: pd.DataFrame, cfg=None) -> list[dict]:
+    """The Pine strategy's order fills, as TradingView draws them for `strategy()` scripts.
+
+    Entries (Buy/Sell), closes when RSI crosses the 70/30 limits or the EMA trend flips, and reversals
+    (an opposite entry that closes the open position on the same bar). Orders fill at the NEXT bar's open,
+    so each marker sits on the fill bar. Computed on the timeframe's own bars, like TradingView.
+    """
+    from src.smc_logic.config import SMCConfig
+    from src.smc_logic.triple_confirmation import simulate_strategy, triple_confirmation_frame
+
+    if df is None or len(df) < 60:
+        return []
+    cfg = cfg or SMCConfig()
+    f = triple_confirmation_frame(df, cfg)
+    tr = simulate_strategy(df, cfg)
+    if tr.empty:
+        return []
+    ts = pd.to_datetime(df["timestamp"]).reset_index(drop=True)
+    pos_of = {t: i for i, t in enumerate(ts)}
+    rsi, bear, bull = f["rsi"].to_numpy(float), f["trend_bear"].to_numpy(bool), f["trend_bull"].to_numpy(bool)
+    entries = {(pd.Timestamp(r.entry_time), r.direction) for r in tr.itertuples(index=False)}
+    exits = {(pd.Timestamp(r.exit_time), r.direction) for r in tr.itertuples(index=False) if pd.notna(r.exit_time)}
+    out = []
+    for r in tr.itertuples(index=False):
+        long = r.direction == "long"
+        et = pd.Timestamp(r.entry_time)
+        opposite = "short" if long else "long"
+        rev_from = opposite if (et, opposite) in exits else None
+        text = ("Buy" if long else "Sell") + (" · reverse" if rev_from else "")
+        out.append(dict(time=_epoch(et), pos="below" if long else "above", shape="arrowUp" if long else "arrowDown",
+                        color=PURPLE, text=text, kind="fills"))
+        if pd.isna(r.exit_time):
+            continue
+        xt = pd.Timestamp(r.exit_time)
+        if (xt, opposite) in entries:
+            continue  # shown as the reversing entry above instead of two stacked arrows
+        i = pos_of.get(xt)
+        sb = i - 1 if i else None
+        if sb is None or sb < 0:
+            why = "exit"
+        elif long:
+            why = f"RSI ≥ {cfg.rsi_overbought:g}" if rsi[sb] >= cfg.rsi_overbought else ("trend flip" if bear[sb] else "exit")
+        else:
+            why = f"RSI ≤ {cfg.rsi_oversold:g}" if rsi[sb] <= cfg.rsi_oversold else ("trend flip" if bull[sb] else "exit")
+        out.append(dict(time=_epoch(xt), pos="above" if long else "below", shape="arrowDown" if long else "arrowUp",
+                        color=PURPLE, text=f"Close · {why}", kind="fills"))
+    return out
+
+
 def trade_overlays(trades: pd.DataFrame, symbol: str, t_last: int) -> dict:
     """Entry/exit markers and SL/TP/entry lines for this symbol's trades."""
     markers, segs = [], []
@@ -230,6 +280,7 @@ def _tf_dataset(src: pd.DataFrame, native: str, ctx: pd.DataFrame | None = None)
     shown = full.tail(keep).reset_index(drop=True) if keep else full
     ds = dataset_for(shown)
     ov = smc_overlays(ctx) if ctx is not None else dict(zones=[], segs=[], markers=[])
+    ov["markers"] = ov["markers"] + strategy_fills(full)
     if len(shown):
         t0 = _epoch(shown["timestamp"].iat[0])
         ov = dict(

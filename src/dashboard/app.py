@@ -1,5 +1,5 @@
 """
-SMC Agent dashboard (Streamlit).
+AlphaWave dashboard (Streamlit).
 
     streamlit run src/dashboard/app.py
     DATABASE_URL=sqlite:///data/demo.db streamlit run src/dashboard/app.py     # offline demo data
@@ -23,14 +23,17 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from src.config import get_settings
+from src import universe as U
+from src.dashboard import brand
 from src.dashboard import data as D
 from src.dashboard import metrics as m
 from src.dashboard import theme as T
 from src.dashboard.chart_component import chart_html
 from src.data_ingestion.backfill import latest_bar_time, load_bars
+from src.data_ingestion.on_demand import ensure_symbol_data
 from src.db.schema import get_engine, init_db
 
-st.set_page_config(page_title="SMC Agent", page_icon="📈", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title=brand.NAME, page_icon=brand.page_icon(), layout="wide", initial_sidebar_state="collapsed")
 st.html(T.CSS)
 
 S = get_settings()
@@ -68,6 +71,17 @@ def _trades(db: str) -> pd.DataFrame:
 @st.cache_data(ttl=60)
 def _bars(db: str, sym: str, days: int, ext: bool, last_ts: str) -> pd.DataFrame:
     return load_bars(engine, sym, S.timeframe, since=utc_now() - timedelta(days=days), extended_hours=ext)
+
+
+@st.cache_data(ttl=6 * 3600, show_spinner=False)
+def _assets() -> list[dict]:
+    return U.load_assets()
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def _ensure(sym: str) -> dict:
+    """Pull a symbol's bars the first time it is opened (then only top up the newest ones)."""
+    return ensure_symbol_data(sym, engine=engine)
 
 
 @st.cache_data(ttl=120)
@@ -133,11 +147,13 @@ with st.sidebar:
     st.caption(f"DB `{DB.split('///')[-1]}`  ·  times in America/Chicago")
 
 RUN_EVERY = None if refresh == "Off" else refresh
-tickers = tuple(S.tickers)
+tickers = tuple(S.tickers)  # the trade list (TICKERS in .env): the only symbols the scheduler ever trades
+watch = [w for w in U.load_watchlist() if w not in tickers]  # research-only symbols you opened and starred
+scan_syms = tuple(tickers) + tuple(watch)
 trades_all = _trades(DB)
 trades = trades_all if mode_filter == "All" or trades_all.empty else trades_all[trades_all["mode"] == mode_filter]
-stamp = "|".join(_last_ts(t) for t in tickers)
-rows = _scan_rows(DB, tickers, ext, stamp)
+stamp = "|".join(_last_ts(t) for t in scan_syms)
+rows = _scan_rows(DB, scan_syms, ext, stamp)
 by_sym = {r["symbol"]: r for r in rows}
 prob, model_ver, _ = m.latest_model_probability(engine)
 k = m.kpis(trades, start_equity, model_prob=prob)
@@ -191,10 +207,44 @@ if 0 < k["trades"] < 30:
 left, right = st.columns([3.35, 1.15], gap="small")
 
 with left:
-    sym = st.pills("Symbol", list(tickers), default=tickers[0], selection_mode="single", label_visibility="collapsed", key="sym") or tickers[0]
+    assets = _assets()
+    names = {a["symbol"]: a.get("name", "") for a in assets}
+
+    def _picked():  # runs before the rerun, so the pills below can be pointed at the new symbol
+        v = st.session_state.get("search")
+        if v:
+            st.session_state["viewing"] = v
+            st.session_state["sym"] = v
+            st.session_state["search"] = None  # clear the box, like a TradingView symbol search
+
+    st.selectbox("Search", options=sorted(names), index=None, key="search", on_change=_picked, label_visibility="collapsed",
+                 placeholder="Search any US stock or ETF — ticker or company name (data loads when you open it)",
+                 format_func=lambda v: f"{v} — {names.get(v, '')}" if names.get(v) else v)
+    opts = list(dict.fromkeys(list(tickers) + watch + [x for x in (st.session_state.get("viewing"), st.session_state.get("sym")) if x]))
+    if st.session_state.get("sym") not in opts:
+        st.session_state["sym"] = tickers[0]
+    sym = st.pills("Symbol", opts, selection_mode="single", label_visibility="collapsed", key="sym",
+                   format_func=lambda v: v if v in tickers else f"☆ {v}") or tickers[0]
+    if sym not in tickers:
+        c1, c2 = st.columns([1, 3])
+        if sym in watch:
+            if c1.button("★ Remove from watchlist", key="wl_rm"):
+                U.remove_from_watchlist(sym)
+                st.session_state.pop("viewing", None)
+                st.rerun()
+        elif c1.button("☆ Add to watchlist", key="wl_add"):
+            _, err = U.add_to_watchlist(sym)
+            st.toast(err or f"{sym} added to your watchlist")
+            st.rerun()
+        c2.caption(f"{names.get(sym) or sym} · research only: the scheduler trades just your trade list ({', '.join(tickers)}).")
 
     @st.fragment(run_every=("60s" if RUN_EVERY else None))
     def chart_panel():
+        if sym not in tickers or _last_ts(sym, "15Min") == "none":
+            with st.spinner(f"Loading {sym} from Alpaca ({'first open, about 10 seconds' if _last_ts(sym, '15Min') == 'none' else 'refreshing'})…"):
+                info = _ensure(sym)
+            if info.get("error"):
+                st.warning(f"{sym}: {info['error']}")
         core = _chart_core(DB, sym, ext, _last_ts(sym, "15Min"), _last_ts(sym, "5Min"))
         if not core["t_last"]:
             st.info(f"No bars stored for {sym}. Run `python -m src.data_ingestion.backfill`.")

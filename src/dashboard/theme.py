@@ -4,6 +4,8 @@ from __future__ import annotations
 import html
 from datetime import datetime, timezone
 
+from src.dashboard.brand import lockup_img
+
 BG, PANEL, PANEL2, BORDER = "#0e1019", "#1b1e2e", "#222640", "#2a2e45"
 TEXT, MUTED, UP, DOWN, ACCENT, AMBER = "#e6e8f2", "#8a90ab", "#26a69a", "#ef5350", "#6c8cff", "#f5b041"
 
@@ -156,7 +158,7 @@ def pill(text, kind="", live=False) -> str:
 
 def topbar(mode_live: bool, market_open: bool, next_open: str | None, kill: bool, equity: float, as_of: str) -> str:
     return (
-        '<div class="tp-top"><div class="tp-logo">SMC<span>·</span>Agent</div>'
+        '<div class="tp-top"><div class="tp-logo">' + lockup_img(28) + '</div>'
         + pill("LIVE TRADING" if mode_live else "PAPER", "down" if mode_live else "up", live=True)
         + pill("Market open" if market_open else f"Market closed{' · opens ' + next_open if next_open else ''}", "up" if market_open else "amber", live=market_open)
         + (pill("KILL SWITCH ON", "down") if kill else "")

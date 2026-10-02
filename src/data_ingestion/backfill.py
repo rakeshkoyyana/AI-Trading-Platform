@@ -31,7 +31,8 @@ def latest_bar_time(engine, symbol: str, timeframe: str) -> datetime | None:
 
 
 def save_bars(engine, symbol: str, timeframe: str, df: pd.DataFrame) -> int:
-    """Insert bars, ignoring ones already stored. Returns rows offered for insert."""
+    """Insert bars; a bar that is already stored is OVERWRITTEN (so a half-formed bar saved earlier, or a bar
+    from another data feed, is corrected by a later fetch). Returns rows offered for insert."""
     if df.empty:
         return 0
     rows = [
@@ -50,9 +51,16 @@ def save_bars(engine, symbol: str, timeframe: str, df: pd.DataFrame) -> int:
     with session_scope(engine) as s:
         for i in range(0, len(rows), 5000):
             chunk = rows[i : i + 5000]
-            if engine.dialect.name == "sqlite":
-                s.execute(sqlite_insert(Bar).on_conflict_do_nothing(), chunk)
-            else:  # generic path for Postgres/Supabase etc.
+            if engine.dialect.name in ("sqlite", "postgresql"):
+                if engine.dialect.name == "sqlite":
+                    ins = sqlite_insert(Bar)
+                else:
+                    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+                    ins = pg_insert(Bar)
+                upd = {c: getattr(ins.excluded, c) for c in ("open", "high", "low", "close", "volume")}
+                s.execute(ins.on_conflict_do_update(index_elements=["symbol", "timeframe", "timestamp"], set_=upd), chunk)
+            else:
                 s.bulk_insert_mappings(Bar, chunk)
     return len(rows)
 
@@ -105,7 +113,7 @@ def backfill(
         if incremental:
             last = latest_bar_time(engine, sym, timeframe)
             if last is not None:
-                start = last.replace(tzinfo=timezone.utc) + timedelta(minutes=1)
+                start = last.replace(tzinfo=timezone.utc)  # re-fetch the newest stored bar: it may have been saved half-formed
         try:
             df = fetch(sym, timeframe, start, now)
         except Exception as exc:  # noqa: BLE001

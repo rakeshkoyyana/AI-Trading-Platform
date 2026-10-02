@@ -197,7 +197,8 @@ class TradingCycle:
     def _closed_bars(self, sym: str, now: datetime) -> pd.DataFrame:
         backfill([sym], self.s.timeframe, months=1, incremental=True, engine=self.engine, fetch=self.fetch)
         bars = load_bars(self.engine, sym, self.s.timeframe, since=now - timedelta(days=self.history_days))
-        while len(bars) and not bar_is_closed(bars["timestamp"].iat[-1].to_pydatetime(), self.tf_min, now):
+        horizon = now - timedelta(minutes=self.s.data_delay_minutes)  # data newer than this is not available/complete
+        while len(bars) and not bar_is_closed(bars["timestamp"].iat[-1].to_pydatetime(), self.tf_min, horizon):
             bars = bars.iloc[:-1]  # drop the still-forming bar
         return bars.reset_index(drop=True)
 
@@ -241,10 +242,11 @@ class TradingCycle:
 
 
 # ------------------------------------------------------------------ scheduler
-def _cron_minutes(tf_min: int) -> str:
+def _cron_minutes(tf_min: int, offset_min: int = 0) -> str:
+    """Minutes past the hour at which a cycle fires: every bar close, plus the data-delay offset."""
     if tf_min >= 60:
-        return "0"
-    return ",".join(str(m) for m in range(0, 60, tf_min))
+        return str(offset_min % 60)
+    return ",".join(str((m + offset_min) % 60) for m in range(0, 60, tf_min))
 
 
 def build_scheduler(cycle: TradingCycle):
@@ -262,7 +264,7 @@ def build_scheduler(cycle: TradingCycle):
     sched.add_job(cycle.start_session, CronTrigger(day_of_week=dow, hour=sh, minute=max(sm - 5, 0), timezone=tz),
                   id="session_start", misfire_grace_time=600)
     sched.add_job(cycle.run_cycle,
-                  CronTrigger(day_of_week=dow, hour=f"{sh}-{eh - 1}", minute=_cron_minutes(cycle.tf_min),
+                  CronTrigger(day_of_week=dow, hour=f"{sh}-{eh - 1}", minute=_cron_minutes(cycle.tf_min, s.data_delay_minutes),
                               second=s.bar_delay_seconds, timezone=tz),
                   id="cycle", max_instances=1, coalesce=True, misfire_grace_time=120)
     sched.add_job(cycle.maybe_flatten, CronTrigger(day_of_week=dow, hour=f"{sh}-{eh}", minute="*", timezone=tz),

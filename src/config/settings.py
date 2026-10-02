@@ -42,6 +42,12 @@ class Settings:
     # --- data --------------------------------------------------------------
     tickers: list[str] = field(default_factory=lambda: list(DEFAULT_TICKERS))
     timeframe: str = "15Min"  # "5Min" | "15Min" | "1Hour" | "1Day"
+    # "sip" = consolidated tape of all US exchanges (what TradingView shows: same prices, same volume, full
+    # extended hours). "iex" = one exchange only (real-time on the free plan, but ~2% of the volume).
+    alpaca_data_feed: str = "sip"
+    # Alpaca's free plan serves SIP only for data older than 15 minutes. Everything that reads bars therefore
+    # works on data at least this many minutes old. Set 0 if the account has a real-time SIP subscription.
+    sip_delay_minutes: int = 16
     # True: indicators/signals/models use every stored bar (pre/post-market included, matching a
     # TradingView chart with "Extended hours" on). False: regular session 09:30-16:00 ET only.
     # Bars are always STORED unfiltered; this only changes what load_bars() returns.
@@ -77,6 +83,11 @@ class Settings:
         return self.trading_mode == "live"
 
     @property
+    def data_delay_minutes(self) -> int:
+        """How far behind the wall clock the usable market data is."""
+        return max(self.sip_delay_minutes, 0) if self.alpaca_data_feed == "sip" else 0
+
+    @property
     def kill_switch_active(self) -> bool:
         return self.kill_switch_file.exists()
 
@@ -88,6 +99,8 @@ def get_settings() -> Settings:
     mode = (env("TRADING_MODE", "paper") or "paper").lower()
     if mode not in {"paper", "live"}:
         raise ValueError(f"TRADING_MODE must be 'paper' or 'live', got {mode!r}")
+    if (env("ALPACA_DATA_FEED", "sip") or "sip").lower() not in {"sip", "iex"}:
+        raise ValueError("ALPACA_DATA_FEED must be 'sip' or 'iex'")
     return Settings(
         alpaca_api_key=env("ALPACA_API_KEY", ""),
         alpaca_secret_key=env("ALPACA_SECRET_KEY", ""),
@@ -97,6 +110,8 @@ def get_settings() -> Settings:
         trading_mode=mode,
         tickers=_csv(env("TICKERS"), DEFAULT_TICKERS),
         timeframe=env("TIMEFRAME", "15Min"),
+        alpaca_data_feed=(env("ALPACA_DATA_FEED", "sip") or "sip").lower(),
+        sip_delay_minutes=int(env("SIP_DELAY_MINUTES", "16")),
         include_extended_hours=env("INCLUDE_EXTENDED_HOURS", "true").lower() in {"1", "true", "yes", "on"},
         database_url=env(
             "DATABASE_URL", f"sqlite:///{PROJECT_ROOT / 'data' / 'trading.db'}"

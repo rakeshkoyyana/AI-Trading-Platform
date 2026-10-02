@@ -11,7 +11,7 @@ from src.execution.sim_broker import SimBroker
 from src.scheduler import market_hours as mh
 from src.scheduler.run_loop import TradingCycle, build_scheduler
 
-S = Settings(max_stop_pct=0.5, min_stop_atr=0.0, tickers=["AAA", "BBB"])
+S = Settings(max_stop_pct=0.5, min_stop_atr=0.0, tickers=["AAA", "BBB"], sip_delay_minutes=0)
 
 
 def utc(y, m, d, h, mi=0):
@@ -177,7 +177,7 @@ def test_too_few_bars_is_skipped_not_traded(world):
 def test_kill_switch_blocks_all_trades(world, tmp_path):
     ks = tmp_path / "KS"
     ks.write_text("x")
-    s = Settings(max_stop_pct=0.5, min_stop_atr=0.0, tickers=["AAA", "BBB"], kill_switch_file=ks)
+    s = Settings(max_stop_pct=0.5, min_stop_atr=0.0, tickers=["AAA", "BBB"], kill_switch_file=ks, sip_delay_minutes=0)
     c = world["make"](settings=s)
     df = world["frames"]["AAA"]
     for k in range(len(df) - 300, len(df), 3):
@@ -212,7 +212,7 @@ def test_flatten_runs_once_at_cutoff(world):
 
 
 def test_flatten_respects_setting_and_after_close(world):
-    s = Settings(max_stop_pct=0.5, min_stop_atr=0.0, tickers=["AAA"], flatten_at_close=False)
+    s = Settings(max_stop_pct=0.5, min_stop_atr=0.0, tickers=["AAA"], flatten_at_close=False, sip_delay_minutes=0)
     assert not world["make"](settings=s).maybe_flatten(utc(2026, 10, 7, 19, 56))
     assert not world["make"]().maybe_flatten(utc(2026, 10, 7, 20, 30))
 
@@ -240,3 +240,31 @@ def test_model_that_does_not_improve_never_gates_trades():
     assert gating_bundle(good, S)[0] is good
     opt_in = Settings(use_unvalidated_model=True)
     assert gating_bundle(bad, opt_in)[0] is bad
+
+
+def test_cycle_schedule_and_bar_horizon_follow_the_sip_delay():
+    from src.scheduler.run_loop import _cron_minutes
+
+    assert _cron_minutes(15) == "0,15,30,45"
+    assert _cron_minutes(15, 16) == "16,31,46,1"  # fire 16 min after each bar close
+    assert _cron_minutes(60, 16) == "16"
+
+
+def test_latest_bar_is_withheld_until_it_is_inside_the_data_horizon(tmp_path):
+    """With a 16-minute SIP delay, the bar that closed 5 minutes ago must not be used yet."""
+    import dataclasses
+
+    from src.data_ingestion.synthetic import make_bars
+
+    bars = make_bars(n_days=3, seed=2)
+    last_open = bars["timestamp"].iat[-1].to_pydatetime()
+    now = last_open + timedelta(minutes=15 + 5)  # last bar closed 5 minutes ago
+
+    def run(delay):
+        s = dataclasses.replace(S, sip_delay_minutes=delay)
+        cyc = TradingCycle(engine=get_engine(f"sqlite:///{tmp_path}/d{delay}.db"), broker=SimBroker(), settings=s,
+                           fetch=lambda sym, tf, a, b: bars, notify=lambda *a, **k: None, state_path=tmp_path / f"s{delay}.json")
+        return cyc._closed_bars("AAA", now)
+
+    assert run(0)["timestamp"].iat[-1] == bars["timestamp"].iat[-1]
+    assert run(16)["timestamp"].iat[-1] == bars["timestamp"].iat[-2]

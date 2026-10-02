@@ -88,3 +88,35 @@ def test_backfill_signals_skips_short_history():
     init_db(eng)
     save_bars(eng, "TINY", "15Min", make_bars(n_days=3))
     assert backfill_signals(["TINY"], "15Min", engine=eng) == {"TINY": 0}
+
+
+def test_signal_backfill_drops_stale_signals_but_keeps_ones_a_trade_used(tmp_path):
+    from datetime import datetime
+
+    from sqlalchemy import select
+
+    from src.db.schema import Signal, Trade, session_scope
+    from src.smc_logic.backfill_signals import SIGNAL_TYPE, backfill_signals
+
+    eng = get_engine(f"sqlite:///{tmp_path}/s.db")
+    init_db(eng)
+    bars = make_bars(n_days=120, seed=3)
+    save_bars(eng, "ZZ", "15Min", bars)
+    backfill_signals(["ZZ"], "15Min", engine=eng)
+    stale_ts = bars["timestamp"].iat[500].to_pydatetime()  # a timestamp that is (almost surely) not a signal bar
+    with session_scope(eng) as s:
+        s.query(Signal).filter(Signal.timestamp == stale_ts).delete()
+        a = Signal(symbol="ZZ", timeframe="15Min", signal_type=SIGNAL_TYPE, timestamp=stale_ts, direction="long", entry_price=1.0)
+        b = Signal(symbol="ZZ", timeframe="15Min", signal_type=SIGNAL_TYPE, timestamp=bars["timestamp"].iat[501].to_pydatetime(),
+                   direction="long", entry_price=1.0)
+        s.add_all([a, b])
+        s.flush()
+        s.add(Trade(symbol="ZZ", direction="long", qty=1, status="closed", signal_id=b.id))
+    backfill_signals(["ZZ"], "15Min", engine=eng)
+    with session_scope(eng) as s:
+        stamps = {x.timestamp for x in s.execute(select(Signal).where(Signal.symbol == "ZZ")).scalars()}
+    real = set(compute_context(bars).query("signal_event != 'none'")["timestamp"].dt.to_pydatetime())
+    if stale_ts not in real:
+        assert stale_ts not in stamps  # stale, unused signal removed
+    if bars["timestamp"].iat[501].to_pydatetime() not in real:
+        assert bars["timestamp"].iat[501].to_pydatetime() in stamps  # referenced by a trade: kept

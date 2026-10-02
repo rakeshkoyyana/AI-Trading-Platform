@@ -55,9 +55,9 @@ def test_backfill_and_incremental(engine):
     assert res == {"AAA": len(full), "BBB": len(full)}
     assert latest_bar_time(engine, "AAA", "15Min") == full["timestamp"].iloc[-1]
 
-    # incremental run should ask only for data after the latest stored bar
+    # incremental run asks from the newest stored bar (re-fetching it, since it may have been saved half-formed)
     backfill(["AAA"], "15Min", incremental=True, engine=engine, fetch=fake_fetch)
-    assert calls[-1].replace(tzinfo=None) > full["timestamp"].iloc[-1].to_pydatetime()
+    assert calls[-1].replace(tzinfo=None) == full["timestamp"].iloc[-1].to_pydatetime()
     assert len(load_bars(engine, "AAA", "15Min")) == len(full)
 
 
@@ -96,3 +96,54 @@ def test_extended_hours_are_stored_and_filtered_only_on_read(tmp_path):
     rth = load_bars(eng, "AAA", "15Min", extended_hours=False)
     assert list(rth["timestamp"].dt.strftime("%H:%M")) == ["13:30", "19:45"]
     assert len(load_bars(eng, "AAA", "15Min")) == 4  # default follows settings (True)
+
+
+def test_refetching_a_bar_overwrites_a_half_formed_one(engine):
+    df = make_bars(n_days=2)
+    partial = df.copy()
+    partial.loc[partial.index[-1], ["high", "close", "volume"]] = [df["low"].iat[-1], df["low"].iat[-1], 1.0]
+    save_bars(engine, "AAA", "15Min", partial)
+    save_bars(engine, "AAA", "15Min", df)  # the completed bar arrives on the next fetch
+    got = load_bars(engine, "AAA", "15Min", extended_hours=True)
+    assert len(got) == len(df)
+    assert got["volume"].iat[-1] == df["volume"].iat[-1] and got["high"].iat[-1] == df["high"].iat[-1]
+
+
+def test_effective_end_clamps_to_the_data_horizon():
+    from datetime import datetime, timedelta, timezone
+
+    from src.data_ingestion.common import effective_end
+
+    now = datetime(2026, 10, 2, 15, 0, tzinfo=timezone.utc)
+    assert effective_end(None, 16, now) == now - timedelta(minutes=16)
+    assert effective_end(now, 16, now) == now - timedelta(minutes=16)
+    early = now - timedelta(days=3)
+    assert effective_end(early, 16, now) == early  # an earlier end is left alone
+    assert effective_end(None, 0, now) == now
+
+
+def test_fallback_only_for_errors_or_long_empty_windows(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    import pandas as pd
+
+    from src.data_ingestion import alpaca_data, get_bars_with_fallback, yfinance_fallback
+    from src.data_ingestion.common import BAR_COLUMNS
+
+    empty = pd.DataFrame(columns=BAR_COLUMNS)
+    yf_calls = []
+    monkeypatch.setattr(alpaca_data, "get_bars", lambda *a, **k: empty)
+    monkeypatch.setattr(yfinance_fallback, "get_bars", lambda *a, **k: yf_calls.append(1) or empty)
+    now = datetime.now(timezone.utc)
+    get_bars_with_fallback("X", "15Min", now - timedelta(hours=1), now)  # short window: legitimately empty
+    assert yf_calls == []
+    get_bars_with_fallback("X", "15Min", now - timedelta(days=30), now)  # long window empty: ask the fallback
+    assert yf_calls == [1]
+
+
+def test_data_delay_follows_the_feed():
+    from src.config.settings import Settings
+
+    assert Settings().alpaca_data_feed == "sip" and Settings().data_delay_minutes == 16
+    assert Settings(alpaca_data_feed="iex").data_delay_minutes == 0
+    assert Settings(sip_delay_minutes=0).data_delay_minutes == 0

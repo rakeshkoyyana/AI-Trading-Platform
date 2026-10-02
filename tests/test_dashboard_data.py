@@ -151,3 +151,60 @@ def test_theme_helpers_escape_and_render():
     tape = T.ticker_tape([dict(symbol="SPY", price=500.0, chg_pct=-1.0)], [dict(symbol="SPY", headline="Hello", score=0.4)])
     assert tape.count("SPY") >= 2 and "▼" in tape
     assert T.money(-5) == "-$5.00" and T.money(5, True) == "+$5.00" and T.pct(None) == "—"
+
+
+def _fills_frame():
+    """Hand-built 15m bars: rally (long entry), RSI pops over 70 (close), then a slide (short), then a rally (reverse)."""
+    n = 140
+    t0 = pd.Timestamp("2026-03-02 14:30")
+    ts = [t0 + pd.Timedelta(minutes=15 * i) for i in range(n)]
+    price = np.concatenate([np.linspace(100, 90, 40), np.linspace(90, 110, 40), np.linspace(110, 95, 30), np.linspace(95, 108, 30)])
+    vol = np.full(n, 1000.0)
+    vol[::3] = 4000.0  # volume spikes so the volume confirmation is regularly satisfied
+    return pd.DataFrame(dict(timestamp=ts, open=price, high=price + 0.3, low=price - 0.3, close=price + 0.05, volume=vol))
+
+
+def test_strategy_fills_follow_the_pine_entry_and_exit_rules():
+    from src.smc_logic.triple_confirmation import simulate_strategy
+
+    df = _fills_frame()
+    fills = D.strategy_fills(df)
+    trades = simulate_strategy(df)
+    assert fills and all(f["kind"] == "fills" and f["color"] == D.PURPLE for f in fills)
+    entries = [f for f in fills if f["text"].startswith(("Buy", "Sell"))]
+    assert len(entries) == len(trades)
+    # every entry marker sits on the strategy's fill bar (next bar's open)
+    want = sorted(int(pd.Timestamp(t).tz_localize("UTC").timestamp()) for t in trades["entry_time"])
+    assert sorted(f["time"] for f in entries) == want
+    closes = [f for f in fills if f["text"].startswith("Close")]
+    assert closes and all(any(k in c["text"] for k in ("RSI", "trend flip", "exit")) for c in closes)
+    assert any("RSI ≥ 70" in c["text"] or "RSI ≤ 30" in c["text"] or "trend flip" in c["text"] for c in closes)
+    assert D.strategy_fills(df.iloc[:20]) == []  # too little history to mean anything
+
+
+def test_reversals_show_one_marker_not_two():
+    df = _fills_frame()
+    fills = D.strategy_fills(df)
+    rev = [f for f in fills if "reverse" in f["text"]]
+    times = [f["time"] for f in fills]
+    for r in rev:  # a reversing entry replaces the closing arrow on the same bar
+        assert times.count(r["time"]) == 1
+
+
+def test_fills_are_on_every_timeframe_dataset(world):
+    bars, _ = world
+    p = D.build_chart_payload(bars, None, pd.DataFrame(columns=["symbol"]), "AAA")
+    for tf in ("15m", "1H", "4H"):
+        assert any(m["kind"] == "fills" for m in p["datasets"][tf]["markers"]), tf
+
+
+def test_brand_assets_exist_and_header_uses_the_logo():
+    from src.dashboard import brand
+
+    assert brand.NAME == "AlphaWave" and brand.FAVICON.exists()
+    for f in ("alphawave-mark.svg", "alphawave-lockup-dark.svg", "alphawave-lockup-light.svg", "alphawave-lockup-dark.png"):
+        assert (brand.BRAND_DIR / f).stat().st_size > 300, f
+    img = brand.lockup_img(28)
+    assert img.startswith("<img") and "data:image/svg+xml;base64," in img
+    assert 'src="data:image/svg+xml;base64,' in T.topbar(False, True, None, False, 100000.0, "now")
+    assert "SMC" not in T.topbar(False, True, None, False, 100000.0, "now")

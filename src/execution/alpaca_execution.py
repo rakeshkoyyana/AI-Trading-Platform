@@ -91,7 +91,54 @@ class AlpacaBroker(Broker):
 
     def get_order(self, order_id: str) -> OrderResult | None:
         try:
-            return _result(self.client.get_order_by_id(order_id))
+            from alpaca.trading.requests import GetOrderByIdRequest
+
+            # nested=True returns the stop / target legs, which reconcile needs to see which one filled
+            return _result(self.client.get_order_by_id(order_id, GetOrderByIdRequest(nested=True)))
+        except Exception:  # noqa: BLE001
+            return None
+
+    _LIVE = {"new", "accepted", "held", "pending_new", "partially_filled", "pending_replace", "accepted_for_bidding"}
+
+    def protected_symbols(self) -> set[str] | None:
+        try:
+            from alpaca.trading.enums import QueryOrderStatus
+            from alpaca.trading.requests import GetOrdersRequest
+
+            out: set[str] = set()
+            for o in self.client.get_orders(GetOrdersRequest(status=QueryOrderStatus.OPEN, nested=True, limit=500)):
+                for x in [o, *(getattr(o, "legs", None) or [])]:
+                    r = _result(x)
+                    if r.order_type in {"stop", "stop_limit", "trailing_stop"} and r.status in self._LIVE:
+                        out.add(r.symbol)
+            return out
+        except Exception:  # noqa: BLE001
+            return None
+
+    def last_exit_fill(self, symbol, direction, after=None):
+        try:
+            from datetime import timezone
+
+            from alpaca.trading.enums import QueryOrderStatus
+            from alpaca.trading.requests import GetOrdersRequest
+
+            want = "sell" if direction == "long" else "buy"
+            if after is not None and getattr(after, "tzinfo", None) is None:
+                after = after.replace(tzinfo=timezone.utc)
+            orders = self.client.get_orders(GetOrdersRequest(status=QueryOrderStatus.CLOSED, symbols=[symbol],
+                                                             after=after, limit=20, nested=True))
+            fills = []
+            for o in orders:
+                for x in [o, *(getattr(o, "legs", None) or [])]:
+                    r = _result(x)
+                    if r.side == want and r.filled_avg_price and r.status == "filled":
+                        fills.append((getattr(x, "filled_at", None), r))
+            if not fills:
+                return None
+            fills.sort(key=lambda f: str(f[0]))
+            r = fills[-1][1]
+            kind = "stop" if r.order_type in {"stop", "stop_limit"} else ("target" if r.order_type == "limit" else "market")
+            return float(r.filled_avg_price), kind
         except Exception:  # noqa: BLE001
             return None
 

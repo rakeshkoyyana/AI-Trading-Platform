@@ -68,7 +68,7 @@ def _render_html(html: str, height: int) -> None:
 
 # ------------------------------------------------------------------ cached loaders
 @st.cache_data(ttl=45)
-def _trades(db: str) -> pd.DataFrame:
+def _trades(db: str, sig: object = None) -> pd.DataFrame:  # `sig` busts the cache the moment trades/orders change
     return m.load_trades(engine)
 
 
@@ -164,7 +164,9 @@ RUN_EVERY = None if refresh == "Off" else refresh
 tickers = tuple(S.tickers)  # the trade list (TICKERS in .env): the only symbols the scheduler ever trades
 watch = [w for w in U.load_watchlist() if w not in tickers]  # research-only symbols you opened and starred
 scan_syms = tuple(tickers) + tuple(watch)
-trades_all = _trades(DB)
+SIG = control.change_signature(engine)  # what trade control compares against, to redraw the page on any change
+st.session_state["_sig"] = SIG
+trades_all = _trades(DB, hash(SIG))
 trades = trades_all if mode_filter == "All" or trades_all.empty else trades_all[trades_all["mode"] == mode_filter]
 stamp = "|".join(_last_ts(t) for t in scan_syms)
 rows = _scan_rows(DB, scan_syms, ext, stamp)
@@ -210,8 +212,10 @@ def _mode_changed(sym_: str) -> None:
         control.set_mode(engine, sym_, v.lower())
 
 
-@st.fragment(run_every="10s")  # approvals are time-limited, so this always polls
+@st.fragment(run_every="3s")  # approvals are time-limited and closes should show up fast, so this always polls
 def trade_control():
+    if control.change_signature(engine) != st.session_state.get("_sig"):
+        st.rerun()  # a trade / approval / close changed in the database: redraw the whole page, no manual refresh
     viewed = [x for x in (st.session_state.get("viewing"), st.session_state.get("sym")) if x]
     syms = list(dict.fromkeys([*tickers, *watch, *viewed]))
     modes = control.get_modes(engine, syms, S)
@@ -249,7 +253,7 @@ def trade_control():
                         f"{stop_s}{prob_s} · expires in {left_s // 60}:{left_s % 60:02d}")
             if c2.button("Approve", key=f"ap_{p.id}", type="primary"):
                 ok = control.decide(engine, p.id, True)
-                st.toast("Approved – the scheduler will send it within ~10 s" if ok else "Too late – that request expired")
+                st.toast("Approved – the scheduler will send it within ~2 s" if ok else "Too late – that request expired")
                 st.rerun()
             if c3.button("Reject", key=f"rj_{p.id}"):
                 control.decide(engine, p.id, False)
@@ -274,13 +278,13 @@ def trade_control():
             c1, c2 = st.columns([5, 2])
             c1.markdown(f"{'🟢' if h['direction'] == 'long' else '🔴'} **{h['direction'].upper()} {h['symbol']}** × {h['qty']} {e_s}{st_s}{tp_s}")
             if h["symbol"] in waiting:
-                c2.caption("closing… (sent within ~5 s)")
+                c2.caption("closing… (sent within ~2 s)")
             elif st.session_state.get("confirm_close") == h["symbol"]:
                 b1, b2 = c2.columns(2)
                 if b1.button("Confirm", key=f"cc_{h['symbol']}", type="primary"):
                     ok = control.request_close(engine, h["symbol"])
                     st.session_state.pop("confirm_close", None)
-                    st.toast("Closing at market – the scheduler sends it within ~5 s" if ok else "Already closing")
+                    st.toast("Closing at market – the scheduler sends it within ~2 s" if ok else "Already closing")
                     st.rerun()
                 if b2.button("Cancel", key=f"cx_{h['symbol']}"):
                     st.session_state.pop("confirm_close", None)
@@ -295,7 +299,7 @@ def trade_control():
         if recent:
             st.caption("Recent: " + "  ·  ".join(
                 f"{r.symbol} {r.direction} – {r.status}" + (f" ({r.note})" if r.status == "failed" and r.note else "") for r in recent))
-        st.caption("Approved orders are sent by the scheduler (`python -m src.scheduler.run_loop`) within about 10 seconds; "
+        st.caption("Approved orders are sent by the scheduler (`python -m src.scheduler.run_loop`) within a couple of seconds; "
                    "open positions also close on the Pine exit rules, the take-profit or stop at the broker, and are flattened before the close.")
 
 

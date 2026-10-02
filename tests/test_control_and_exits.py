@@ -351,3 +351,56 @@ def test_manual_close_closes_the_trade_even_when_the_fill_price_is_not_back_yet(
     with session_scope(world["engine"]) as s:
         t = s.execute(select(Trade).where(Trade.symbol == sym).order_by(Trade.id.desc())).scalars().first()
     assert t.status == "closed" and t.exit_price and t.exit_price > 0, "trade must not stay open or get a 0 exit"
+
+
+# ------------------------------------------------ live updates, fills and stop watch
+def test_change_signature_moves_when_trades_orders_or_modes_change(engine):
+    s0 = control.change_signature(engine)
+    with session_scope(engine) as s:
+        s.add(Trade(symbol="AAA", direction="long", qty=1, entry_price=10.0, status="filled", entry_time=datetime.utcnow()))
+    s1 = control.change_signature(engine)
+    assert s1 != s0
+    with session_scope(engine) as s:
+        t = s.execute(select(Trade)).scalars().first()
+        t.status, t.exit_price = "closed", 11.0
+    assert control.change_signature(engine) != s1
+    s2 = control.change_signature(engine)
+    control.request_close(engine, "AAA")
+    assert control.change_signature(engine) != s2
+
+
+def test_reconcile_books_the_real_exit_fill_when_the_legs_are_not_visible(engine):
+    from src.execution.sim_broker import SimBroker
+    from src.execution.trade_log import reconcile
+
+    class B(SimBroker):
+        def last_exit_fill(self, symbol, direction, after=None):
+            return 99.5, "stop"
+
+    b = B()
+    b.set_price("AAA", 100.0)
+    res = b.place_order("AAA", "buy", 5)  # entered without legs
+    with session_scope(engine) as s:
+        s.add(Trade(symbol="AAA", direction="long", qty=5, entry_price=100.0, status="filled",
+                    broker_order_id=res.id, entry_time=datetime.utcnow()))
+    b.close_position("AAA")  # position disappears at the broker
+    reconcile(engine, b, None)
+    with session_scope(engine) as s:
+        t = s.execute(select(Trade)).scalars().first()
+    assert t.status == "closed" and t.exit_price == 99.5 and "stop" in (t.note or "")
+    assert t.pnl == pytest.approx(-2.5)
+
+
+def test_quick_reconcile_warns_when_an_open_position_has_no_resting_stop(world):
+    c = world["make"]()
+    b = world["broker"]
+    b.set_price("AAA", 100.0)
+    res = b.place_order("AAA", "buy", 5)  # no stop attached
+    with session_scope(world["engine"]) as s:
+        s.add(Trade(symbol="AAA", direction="long", qty=5, entry_price=100.0, status="filled",
+                    broker_order_id=res.id, entry_time=datetime.utcnow()))
+    c.quick_reconcile()
+    assert any("NO protective stop" in m and "AAA" in m for _l, m in world["msgs"])
+    n = len(world["msgs"])
+    c.quick_reconcile()
+    assert len(world["msgs"]) == n  # warned once, not every 30 s

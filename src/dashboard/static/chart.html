@@ -121,6 +121,7 @@
 
   // ---------- dataset / snapping ----------
   let DS = P.datasets[prefs.tf] || P.datasets["15m"];
+  let ALLSEGS = [], ALLMARKS = [];
   let times = [];
   const snapIdx = (t) => {            // index of last bar with time <= t (clamped)
     let lo = 0, hi = times.length - 1, ans = 0;
@@ -148,7 +149,7 @@
       target.useBitmapCoordinateSpace((s) => {
         const c = s.context, hr = s.horizontalPixelRatio, vr = s.verticalPixelRatio, W = s.bitmapSize.width;
         c.save();
-        for (const z of P.zones) {
+        for (const z of DS.zones) {
           if (!zoneVisible(z)) continue;
           const x0 = xOf(z.t0), y0 = yOf(z.top), y1 = yOf(z.bottom);
           if (x0 == null || y0 == null || y1 == null) continue;
@@ -180,7 +181,7 @@
           c.beginPath(); c.moveTo(x0 * hr, y * vr); c.lineTo(x1 * hr, y * vr); c.stroke();
           if (label) { c.setLineDash([]); c.fillStyle = color; c.font = `${Math.round(10 * hr)}px sans-serif`; c.fillText(label, x1 * hr - 34 * hr, y * vr - 3 * vr); }
         };
-        for (const g of P.segs) {
+        for (const g of ALLSEGS) {
           if (!segVisible(g)) continue;
           const x0 = xOf(g.t0), y = yOf(g.p);
           if (x0 == null || y == null) continue;
@@ -241,8 +242,9 @@
   function applyMarkers() {
     if (!times.length) { markersApi.setMarkers([]); return; }
     const out = [];
-    for (const m of P.markers) {
+    for (const m of ALLMARKS) {
       if (!prefs[m.kind]) continue;
+      if (m.time < times[0]) continue;   // older than the loaded window: don't pile onto the first bar
       const t = snapT(m.time);
       if (t == null) continue;
       out.push({ time: t, position: m.pos === "above" ? "aboveBar" : "belowBar", color: m.color, shape: m.shape, text: m.kind === "signals" ? "" : m.text, size: m.kind === "structure" ? 1 : m.kind === "internal" || m.kind === "eq" ? 0.5 : 1 });
@@ -256,6 +258,9 @@
     prefs.tf = tf; savePrefs();
     DS = P.datasets[tf];
     times = DS.candles.map((c) => c.time);
+    ALLSEGS = (DS.segs || []).concat(P.tsegs || []);
+    ALLMARKS = (DS.markers || []).concat(P.tmarkers || []);
+    $("#empty").textContent = tf === "5m" ? "No 5-minute bars stored yet. Run: python -m src.data_ingestion.backfill --timeframe 5Min --months 2" : "No bars stored for this timeframe yet.";
     $("#empty").style.display = times.length ? "none" : "flex";
     candles.setData(DS.candles); ema9.setData(DS.ema9); ema21.setData(DS.ema21); vol.setData(DS.volume); rsi.setData(DS.rsi);
     document.querySelectorAll("#tfs button").forEach((b) => b.classList.toggle("on", b.dataset.tf === tf));

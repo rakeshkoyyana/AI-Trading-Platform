@@ -43,6 +43,13 @@ def test_timeframe_switch_and_toggles(page):
     page.click("button[data-tf='1D']")
     page.wait_for_timeout(300)
     assert "on" in page.get_attribute("button[data-tf='1D']", "class")
+    for tf in ("2H", "4H", "5m", "1H"):
+        page.click(f"button[data-tf='{tf}']")
+        page.wait_for_timeout(250)
+        assert "on" in page.get_attribute(f"button[data-tf='{tf}']", "class")
+    assert page.errors == []
+    page.click("button[data-tf='5m']")  # no 5-minute bars were supplied in this fixture
+    assert "backfill --timeframe 5Min" in page.inner_text("#empty")
     page.click("button[data-tf='15m']")
     before = page.get_attribute("button[data-k='pd']", "class")
     page.click("button[data-k='pd']")

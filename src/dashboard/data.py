@@ -19,7 +19,11 @@ from src.db.schema import News, SentimentScore, session_scope
 from src.smc_logic.indicators import ema as _ema
 from src.smc_logic.indicators import rsi as _rsi
 
-TIMEFRAMES = {"15m": "15Min", "30m": "30Min", "1H": "1Hour", "1D": "1Day"}
+TIMEFRAMES = {"5m": "5Min", "15m": "15Min", "30m": "30Min", "1H": "1Hour", "2H": "2Hour", "4H": "4Hour", "1D": "1Day"}
+_WIDTH = {"30Min": 30, "1Hour": 60, "2Hour": 120, "4Hour": 240}
+MIN_CTX_BARS = 120  # below this the SMC context is mostly warm-up noise, so no overlays are drawn
+# bars shown per timeframe (the context is always computed on everything we have, for warm-up)
+DISPLAY_BARS = {"5Min": 4500, "15Min": 2600, "30Min": 1800, "1Hour": 1500}
 UP, DOWN, ACCENT, AMBER, MUTED = "#26a69a", "#ef5350", "#6c8cff", "#f5b041", "#8a90ab"
 
 
@@ -33,20 +37,34 @@ def _f(x, nd=4):
 
 # --------------------------------------------------------------- resampling
 def resample_bars(df: pd.DataFrame, tf: str) -> pd.DataFrame:
-    """Aggregate 15-minute bars into 30Min / 1Hour (anchored at 09:30 ET) / 1Day bars."""
-    if tf == "15Min" or df.empty:
+    """Aggregate 15-minute bars into 30Min / 1Hour / 2Hour / 4Hour / 1Day bars.
+
+    Intraday buckets are session-aware, like TradingView: regular-session buckets are anchored at 09:30 ET,
+    pre-market at 04:00 and after-hours at 16:00, so a bucket never straddles two sessions.
+    The bar is stamped with its bucket start (not the first print), and daily bars use the regular session only.
+    """
+    if tf in ("5Min", "15Min") or df.empty:
         return df.reset_index(drop=True)
-    et = pd.to_datetime(df["timestamp"]).dt.tz_localize("UTC").dt.tz_convert("America/New_York")
-    day = et.dt.date
     if tf == "1Day":
-        keys = [day]
-    else:
-        width = {"30Min": 30, "1Hour": 60}[tf]
-        keys = [day, ((et.dt.hour * 60 + et.dt.minute - 570) // width)]
-    out = df.groupby(keys, sort=True).agg(
-        timestamp=("timestamp", "first"), open=("open", "first"), high=("high", "max"),
-        low=("low", "min"), close=("close", "last"), volume=("volume", "sum"),
+        rth = df[regular_hours_mask(df["timestamp"], "15Min")]
+        if rth.empty:
+            return rth.reset_index(drop=True)
+        day = pd.to_datetime(rth["timestamp"]).dt.tz_localize("UTC").dt.tz_convert("America/New_York").dt.date
+        out = rth.groupby(day, sort=True).agg(
+            timestamp=("timestamp", "first"), open=("open", "first"), high=("high", "max"),
+            low=("low", "min"), close=("close", "last"), volume=("volume", "sum"),
+        )
+        return out.reset_index(drop=True)
+    width = _WIDTH[tf]
+    et = pd.to_datetime(df["timestamp"]).dt.tz_localize("UTC").dt.tz_convert("America/New_York")
+    mins = (et.dt.hour * 60 + et.dt.minute).to_numpy()
+    origin = np.where(mins < 570, 240, np.where(mins < 960, 570, 960))  # pre 04:00 | regular 09:30 | post 16:00
+    offset = origin + ((mins - origin) // width) * width
+    start = (et.dt.normalize() + pd.to_timedelta(offset, unit="m")).dt.tz_convert("UTC").dt.tz_localize(None)
+    out = df.groupby(start.to_numpy(), sort=True).agg(
+        open=("open", "first"), high=("high", "max"), low=("low", "min"), close=("close", "last"), volume=("volume", "sum"),
     )
+    out.insert(0, "timestamp", pd.to_datetime(out.index))
     return out.reset_index(drop=True)
 
 
@@ -197,15 +215,56 @@ def trade_overlays(trades: pd.DataFrame, symbol: str, t_last: int) -> dict:
     return dict(markers=markers, segs=segs)
 
 
+def _tf_dataset(src: pd.DataFrame, native: str, ctx: pd.DataFrame | None = None) -> dict:
+    """One timeframe: candles/volume/EMA/RSI plus SMC overlays computed on THIS timeframe's own bars.
+
+    (Signals and zones must be derived per timeframe, exactly as the Pine script does on a TradingView chart of
+    that timeframe; drawing 15-minute signals on an hourly chart is not comparable to TradingView.)
+    """
+    from src.smc_logic.pipeline import compute_context
+
+    full = resample_bars(src, native)
+    if ctx is None and len(full) >= MIN_CTX_BARS:
+        ctx = compute_context(full)
+    keep = DISPLAY_BARS.get(native)
+    shown = full.tail(keep).reset_index(drop=True) if keep else full
+    ds = dataset_for(shown)
+    ov = smc_overlays(ctx) if ctx is not None else dict(zones=[], segs=[], markers=[])
+    if len(shown):
+        t0 = _epoch(shown["timestamp"].iat[0])
+        ov = dict(
+            zones=[z for z in ov["zones"] if z["t1"] >= t0],
+            segs=[g for g in ov["segs"] if g["t1"] >= t0],
+            markers=[m for m in ov["markers"] if m["time"] >= t0],
+        )
+    return {**ds, **ov, "bars": int(len(shown))}
+
+
 def build_chart_payload(bars: pd.DataFrame, ctx: pd.DataFrame | None, trades: pd.DataFrame, symbol: str,
-                        default_tf: str = "15m") -> dict:
-    """Everything the browser chart needs, as plain JSON-serialisable data."""
-    sets = {label: dataset_for(resample_bars(bars, native)) for label, native in TIMEFRAMES.items()}
-    ov = smc_overlays(ctx)
+                        default_tf: str = "15m", bars_5m: pd.DataFrame | None = None) -> dict:
+    """Everything the browser chart needs, as plain JSON-serialisable data.
+
+    `bars` are native 15-minute bars (30m/1H/2H/4H/1D are built from them); `bars_5m` are native 5-minute bars.
+    `ctx` optionally reuses an already computed 15-minute context.
+    """
+    sets = {}
+    for label, native in TIMEFRAMES.items():
+        if native == "5Min":
+            sets[label] = _tf_dataset(bars_5m if bars_5m is not None else bars.iloc[0:0], native)
+        else:
+            sets[label] = _tf_dataset(bars, native, ctx if native == "15Min" else None)
     t_last = _epoch(bars["timestamp"].iat[-1]) if len(bars) else 0
+    return dict(symbol=symbol, default_tf=default_tf, datasets=sets, t_last=t_last, **_trade_part(trades, symbol, t_last))
+
+
+def _trade_part(trades: pd.DataFrame, symbol: str, t_last: int) -> dict:
     tr = trade_overlays(trades, symbol, t_last)
-    return dict(symbol=symbol, default_tf=default_tf, datasets=sets,
-                zones=ov["zones"], segs=ov["segs"] + tr["segs"], markers=ov["markers"] + tr["markers"])
+    return dict(tsegs=tr["segs"], tmarkers=tr["markers"])
+
+
+def with_trades(payload: dict, trades: pd.DataFrame) -> dict:
+    """Attach (fresh) trade overlays to a cached trade-free payload."""
+    return {**payload, **_trade_part(trades, payload["symbol"], payload["t_last"])}
 
 
 # ------------------------------------------------------- watchlist / scanner

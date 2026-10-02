@@ -88,9 +88,17 @@ def _events(db: str, hours: int) -> pd.DataFrame:
     return m.load_events(engine, hours=hours)
 
 
-def _last_ts(sym: str) -> str:
-    t = latest_bar_time(engine, sym, S.timeframe)
+def _last_ts(sym: str, tf: str | None = None) -> str:
+    t = latest_bar_time(engine, sym, tf or S.timeframe)
     return str(t) if t else "none"
+
+
+@st.cache_data(ttl=120)
+def _chart_core(db: str, sym: str, ext: bool, last15: str, last5: str) -> dict:
+    """Chart datasets with SMC overlays computed per timeframe (trade overlays are attached fresh, uncached)."""
+    b15 = load_bars(engine, sym, "15Min", since=utc_now() - timedelta(days=400), extended_hours=ext)
+    b5 = load_bars(engine, sym, "5Min", since=utc_now() - timedelta(days=45), extended_hours=ext)
+    return D.build_chart_payload(b15, None, pd.DataFrame(columns=["symbol"]), sym, bars_5m=b5)
 
 
 def _sentiment(sym: str) -> dict:
@@ -187,13 +195,11 @@ with left:
 
     @st.fragment(run_every=("60s" if RUN_EVERY else None))
     def chart_panel():
-        lt = _last_ts(sym)
-        bars = _bars(DB, sym, 60, ext, lt)
-        if bars.empty:
+        core = _chart_core(DB, sym, ext, _last_ts(sym, "15Min"), _last_ts(sym, "5Min"))
+        if not core["t_last"]:
             st.info(f"No bars stored for {sym}. Run `python -m src.data_ingestion.backfill`.")
             return
-        payload = D.build_chart_payload(bars, _ctx(DB, sym, ext, lt), trades_all, sym)
-        _render_html(chart_html(payload), 760)
+        _render_html(chart_html(D.with_trades(core, trades_all)), 760)
 
     chart_panel()
 

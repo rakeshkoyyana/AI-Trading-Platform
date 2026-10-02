@@ -14,6 +14,7 @@ pytest -q                   # ~100 s, fully offline
 ## 2. Data -> signals -> model (run once, then weekly)
 ```bash
 python -m src.data_ingestion.backfill --months 12        # bars for every ticker
+python -m src.data_ingestion.backfill --timeframe 5Min --months 2   # optional: only the dashboard's 5m chart needs these
 python -m src.smc_logic.backfill_signals                  # signals + win/loss labels
 python -m src.ml.train                                    # walk-forward eval; saves models/ + MODEL_LOG.md
 ```
@@ -39,7 +40,7 @@ The scheduler needs a machine (or small VM) that stays awake and online all sess
 ## Dashboard guide
 `streamlit run src/dashboard/app.py` (auto-refreshes every 30 s; change in the sidebar).
 - **Top bar + tape:** paper/live badge, market-window state, kill-switch flag, and a scrolling tape of prices + FinBERT-scored headlines.
-- **Chart (TradingView-style):** crosshair with OHLCV/EMA/RSI legend, scroll-zoom/drag-pan, 15m/30m/1H/1D, volume + RSI panes, log scale, magnet crosshair, fullscreen.
+- **Chart (TradingView-style):** crosshair with OHLCV/EMA/RSI legend, scroll-zoom/drag-pan, 5m/15m/30m/1H/2H/4H/1D (each timeframe computes its own signals and SMC zones, like a TradingView chart of that timeframe; 2H/4H/1H buckets follow the sessions: 09:30 regular, 04:00 pre-market, 16:00 after-hours), volume + RSI panes, log scale, magnet crosshair, fullscreen.
   SMC overlays (toggle each): order blocks, FVG, BOS/CHoCH (swing), internal structure, swing levels, premium/discount, EQH/EQL, signals, your trades, SL/TP lines.
   Drawing tools: H-line, trend line, box, measure (Δprice, %, bars, time); drawings persist per symbol in your browser. `Esc` cancels a tool.
 - **Match the chart to TradingView:** the sidebar toggle “Include extended-hours bars” (and `INCLUDE_EXTENDED_HOURS` in `.env`) must equal your TradingView chart’s Extended-hours setting.

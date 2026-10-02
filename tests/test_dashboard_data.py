@@ -29,6 +29,7 @@ def test_resample_preserves_ohlcv_and_alignment(world):
     assert d["high"].iat[0] == first_day["high"].max()
     # 09:30 ET anchored hourly buckets: 26 fifteen-minute bars/day -> 7 hourly buckets
     assert len(h) == 40 * 7
+    assert len(D.resample_bars(bars, "2Hour")) == 40 * 4 and len(D.resample_bars(bars, "4Hour")) == 40 * 2
     assert D.resample_bars(bars, "15Min") is not None and len(D.resample_bars(bars, "15Min")) == len(bars)
 
 
@@ -36,21 +37,80 @@ def test_payload_is_json_and_well_formed(world):
     bars, ctx = world
     trades = pd.DataFrame([dict(symbol="AAA", entry_time=bars["timestamp"].iat[600], exit_time=bars["timestamp"].iat[610], direction="short",
                                 entry_price=100.0, exit_price=98.0, qty=5, pnl=10.0, stop_loss=101.0, take_profit=97.0)])
-    p = D.build_chart_payload(bars, ctx, trades, "AAA")
+    b5 = make_bars(n_days=10, seed=9, timeframe_minutes=5)
+    p = D.build_chart_payload(bars, ctx, trades, "AAA", bars_5m=b5)
     json.dumps(p)  # must serialise
-    assert set(p["datasets"]) == {"15m", "30m", "1H", "1D"}
+    assert list(p["datasets"]) == ["5m", "15m", "30m", "1H", "2H", "4H", "1D"]
     c = p["datasets"]["15m"]["candles"]
     assert [x["time"] for x in c] == sorted(x["time"] for x in c) and len(c) == len(bars)
-    assert all(z["top"] > z["bottom"] for z in p["zones"])
-    kinds = {m["kind"] for m in p["markers"]}
-    assert {"signals", "trades"} <= kinds
-    assert {s["label"] for s in p["segs"] if s["kind"] == "trade"} == {"Entry", "SL", "TP"}
+    assert len(p["datasets"]["5m"]["candles"]) == len(b5)
+    for tf, ds in p["datasets"].items():
+        assert all(z["top"] > z["bottom"] for z in ds["zones"]), tf
+    kinds = {m["kind"] for m in p["datasets"]["15m"]["markers"]}
+    assert "signals" in kinds and {m["kind"] for m in p["tmarkers"]} == {"trades"}
+    assert {s["label"] for s in p["tsegs"] if s["kind"] == "trade"} == {"Entry", "SL", "TP"}
     # signal markers line up with the context's events
     n_sig = int(np.isin(ctx["signal_event"].to_numpy(), ["long", "short"]).sum())
-    assert sum(m["kind"] == "signals" for m in p["markers"]) == n_sig
+    assert sum(m["kind"] == "signals" for m in p["datasets"]["15m"]["markers"]) == n_sig
     # RSI/EMA lines carry no NaNs
     for k in ("ema9", "ema21", "rsi"):
         assert all(np.isfinite(x["value"]) for x in p["datasets"]["15m"][k])
+
+
+def test_signals_are_computed_per_timeframe_not_copied_from_15m(world):
+    """An hourly chart must show hourly-bar signals (as TradingView would), not the 15-minute ones."""
+    from src.smc_logic import compute_context
+
+    bars, _ = world
+    p = D.build_chart_payload(bars, None, pd.DataFrame(columns=["symbol"]), "AAA")
+    hourly = D.resample_bars(bars, "1Hour")
+    want = int(np.isin(compute_context(hourly)["signal_event"].to_numpy(), ["long", "short"]).sum())
+    got = sum(m["kind"] == "signals" for m in p["datasets"]["1H"]["markers"])
+    assert got == want
+    assert got != sum(m["kind"] == "signals" for m in p["datasets"]["15m"]["markers"])
+
+
+def test_trade_overlays_can_be_attached_to_a_cached_payload(world):
+    bars, _ = world
+    base = D.build_chart_payload(bars.iloc[:400], None, pd.DataFrame(columns=["symbol"]), "AAA")
+    assert base["tmarkers"] == [] and base["t_last"] > 0
+    tr = pd.DataFrame([dict(symbol="AAA", entry_time=bars["timestamp"].iat[300], exit_time=None, direction="long", entry_price=100.0,
+                            exit_price=None, qty=1, pnl=None, stop_loss=99.0, take_profit=102.0)])
+    assert len(D.with_trades(base, tr)["tsegs"]) == 3 and base["tsegs"] == []
+
+
+def _session_bars(days=2):
+    """15-minute bars 04:00-20:00 ET for a few days (full extended session), UTC-naive timestamps."""
+    rows = []
+    for d in pd.bdate_range("2026-03-02", periods=days):  # winter: EST = UTC-5
+        for k in range(64):
+            t_et = pd.Timestamp(d) + pd.Timedelta(hours=4, minutes=15 * k)
+            rows.append(dict(timestamp=(t_et + pd.Timedelta(hours=5)).tz_localize(None), open=100 + k, high=101 + k, low=99 + k, close=100.5 + k, volume=1000.0))
+    return pd.DataFrame(rows)
+
+
+def test_resample_is_session_aware_for_extended_hours():
+    bars = _session_bars()
+
+    def et(ts):
+        return (pd.Timestamp(ts) - pd.Timedelta(hours=5)).strftime("%H:%M")
+
+    for tf, expect in {
+        "4Hour": ["04:00", "08:00", "09:30", "13:30", "16:00", "20:00"][:5],
+        "2Hour": ["04:00", "06:00", "08:00", "09:30", "11:30", "13:30", "15:30", "16:00", "18:00"],
+        "1Hour": ["04:00", "05:00", "06:00", "07:00", "08:00", "09:00", "09:30", "10:30", "11:30", "12:30", "13:30", "14:30", "15:30", "16:00", "17:00", "18:00", "19:00"],
+    }.items():
+        out = D.resample_bars(bars, tf)
+        assert [et(t) for t in out["timestamp"].iloc[: len(expect)]] == expect, tf
+        assert out["volume"].sum() == bars["volume"].sum()
+    # the 09:30 regular bar never mixes pre-market prints
+    h = D.resample_bars(bars, "1Hour")
+    reg = h[h["timestamp"].map(et) == "09:30"].iloc[0]
+    assert reg["open"] == bars.loc[(bars["timestamp"].map(et) == "09:30")].iloc[0]["open"]
+    # daily bars are regular session only
+    d = D.resample_bars(bars, "1Day")
+    assert len(d) == 2 and d["volume"].iat[0] == 26 * 1000.0
+    assert d["high"].iat[0] == bars.loc[bars["timestamp"].map(et).between("09:30", "15:45"), "high"].iloc[:26].max()
 
 
 def test_fvg_zones_respect_mitigation(world):

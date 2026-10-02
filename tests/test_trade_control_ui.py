@@ -106,3 +106,26 @@ def test_chime_is_a_valid_short_wav_and_banner_text():
     html = alerts_ui.banner_html([p], datetime.utcnow())
     assert "ASTS" in html and "LONG" in html and "waiting for your approval" in html and "banner alert" in html
     assert alerts_ui.new_alert_ids([p], {1}) == [] and alerts_ui.new_alert_ids([p], set()) == [1]
+
+
+def test_close_button_needs_confirm_then_queues_a_close(tmp_path, monkeypatch):
+    from src.db.schema import Trade, session_scope
+
+    at, eng, cfg = _app(tmp_path, monkeypatch)
+    try:
+        with session_scope(eng) as s:
+            s.add(Trade(symbol="SPY", direction="long", qty=10, entry_price=100.0, stop_loss=98.0, take_profit=104.0,
+                        status="filled", entry_time=datetime.utcnow()))
+        at.run()
+        assert not at.exception, [e.value for e in at.exception]
+        at.button(key="cl_SPY").click().run()
+        assert control.list_close_requests(eng, "pending") == []  # first click only asks to confirm
+        at.button(key="cx_SPY").click().run()
+        assert at.button(key="cl_SPY") is not None  # cancelled back to the plain button
+        at.button(key="cl_SPY").click().run()
+        at.button(key="cc_SPY").click().run()
+        reqs = control.list_close_requests(eng, "pending")
+        assert [r.symbol for r in reqs] == ["SPY"]
+        assert "closing" in " ".join(c.value for c in at.caption).lower()
+    finally:
+        cfg.get_settings.cache_clear()

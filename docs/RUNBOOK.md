@@ -58,11 +58,17 @@ agree / mixed / disagree and per analyst, from the paper-run log and (as an inst
 After 2–4 weeks, promote it to a real filter only if agreement clearly predicts wins (verdict thresholds are fixed in advance
 in `src/decision_engine/council.py`). An LLM debate (bull/bear, news/fundamentals analysts) is parked for later because it costs money.
 
-### Exits: Pine rules + protective stop (`EXIT_MODE=pine`)
-Entries carry only a broker-side **protective stop** (OTO order). Positions are closed by the Pine strategy's own rules on the first
-closed bar where `RSI ≥ 70` (long) / `RSI ≤ 30` (short) or the EMA 9/21 trend flips against the position, which is also what the
-purple fills on the chart show. That runs for every mode (even Off) and a flip is followed by a new entry only as the ticker's mode
-allows. `EXIT_MODE=bracket` restores the fixed stop + target bracket.
+### Exits: stop, 1:2 take-profit and Pine rules (`EXIT_MODE=hybrid`, the default)
+**Stop:** just beyond the nearest protective SMC level (bullish order-block low, else swing low; mirrored for shorts) plus a 0.1 ATR
+buffer, else 1.5 ATR. A setup is skipped if the stop is wider than `MAX_STOP_PCT` (5% of price) or tighter than `MIN_STOP_ATR` (0.25 ATR).
+Size = 0.5% of equity risked / stop distance, capped at 5% of equity.
+**Target:** `TARGET_RR` x the stop distance (default 2.0, i.e. 1:2), sent to the broker with the stop as a bracket (whichever fills first cancels the other).
+**Pine exits stay on:** the first closed bar where `RSI ≥ 70` (long) / `RSI ≤ 30` (short) or the EMA 9/21 trend flips against the position closes it
+early and cancels the bracket. That runs for every mode (even Off).
+Other values: `EXIT_MODE=pine` = stop + Pine exits only; `EXIT_MODE=bracket` = stop + structural target only.
+
+**Close button:** Trade control lists open positions; **Close SYMBOL** then **Confirm** queues a market close. The scheduler sends it within ~5 s
+(only while the market is open; a request it does not pick up within 2 minutes expires so it can't fire later by surprise).
 
 ### Any ticker, loaded on demand
 The dashboard search box covers every exchange-listed US stock/ETF (symbol list from Alpaca, cached a day). Opening a symbol

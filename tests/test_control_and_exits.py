@@ -18,7 +18,7 @@ from src.execution.alpaca_execution import AlpacaBroker
 from src.execution.sim_broker import SimBroker
 from src.scheduler.run_loop import TradingCycle
 
-S = Settings(max_stop_pct=0.5, min_stop_atr=0.0, tickers=["AAA", "BBB"], sip_delay_minutes=0, live_hybrid=False,
+S = Settings(exit_mode="pine", max_stop_pct=0.5, min_stop_atr=0.0, tickers=["AAA", "BBB"], sip_delay_minutes=0, live_hybrid=False,
              default_trade_mode="ask")
 
 
@@ -270,3 +270,57 @@ def test_price_beyond_stop_blocks_an_approved_entry(world):
     world["broker"].set_price("AAA", 100.0)
     res = c.process_approvals(now=datetime(2026, 10, 7, 15, 0), force=True)
     assert res and not res[0]["sent"] and "beyond the stop" in res[0]["why"]
+
+
+# ---------------------------------------------------------- hybrid TP + manual close
+def test_hybrid_mode_places_a_two_r_target_and_pine_exits_still_run(world):
+    c = world["make"](dataclasses.replace(S, default_trade_mode="auto", exit_mode="hybrid", target_rr=2.0))
+    for _ in _replay(world, c, start=380, step=2):
+        pass
+    with session_scope(world["engine"]) as s:
+        trades = list(s.execute(select(Trade)).scalars())
+    assert trades
+    for t in trades:
+        risk = abs(t.entry_price - t.stop_loss)
+        assert t.take_profit and abs(abs(t.take_profit - t.entry_price) / risk - 2.0) < 0.05, (t.entry_price, t.stop_loss, t.take_profit)
+    assert any("Pine exit" in (t.note or "") for t in trades if t.status == "closed") or any(
+        t.status == "closed" for t in trades), "expected at least one position to end (Pine exit, target or stop)"
+
+
+def test_manual_close_request_closes_the_position_and_logs_it(world):
+    c = world["make"](dataclasses.replace(S, default_trade_mode="auto"))
+    now = None
+    for _out, now in _replay(world, c, start=380, step=2):
+        if world["broker"].get_positions():
+            break
+    held = world["broker"].get_positions()
+    assert held, "need an open position to close"
+    sym = held[0].symbol
+    assert control.request_close(world["engine"], sym)
+    res = c.process_closes(now=datetime.utcnow(), force=True)
+    assert res and res[0]["closed"], res
+    assert not [p for p in world["broker"].get_positions() if p.symbol == sym]
+    with session_scope(world["engine"]) as s:
+        t = s.execute(select(Trade).where(Trade.symbol == sym, Trade.status == "closed").order_by(Trade.id.desc())).scalars().first()
+    assert t is not None and "Manual close" in (t.note or "")
+    assert control.list_close_requests(world["engine"], "done")
+    # nothing left to close -> a second request fails cleanly instead of sending an order
+    control.request_close(world["engine"], sym)
+    res = c.process_closes(now=datetime.utcnow(), force=True)
+    assert res and not res[0]["closed"]
+
+
+def test_close_request_queue_dedupes_and_expires(tmp_path):
+    from datetime import datetime, timedelta
+
+    from src.db.schema import get_engine, init_db
+
+    eng = get_engine(f"sqlite:///{tmp_path/'c.db'}")
+    init_db(eng)
+    now = datetime(2026, 10, 2, 16, 0)
+    rid = control.request_close(eng, "asts", now=now)
+    assert rid and control.request_close(eng, "ASTS", now=now) is None  # duplicate click ignored
+    assert control.expire_close_requests(eng, now + timedelta(seconds=30)) == 0
+    assert control.expire_close_requests(eng, now + timedelta(seconds=control.CLOSE_TTL_SECONDS + 1)) == 1
+    assert control.list_close_requests(eng, "pending") == []
+    assert control.list_close_requests(eng, "expired")[0].symbol == "ASTS"

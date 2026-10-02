@@ -263,12 +263,40 @@ def trade_control():
 
                 for line in _json.loads(p.reasons_json or "[]"):
                     st.caption(line)
+        held = control.open_positions(engine)
+        waiting = {r.symbol for r in control.list_close_requests(engine, "pending")}
+        if held:
+            st.markdown(f"**Open positions ({len(held)})**")
+        for h in held:
+            e_s = f"@ {h['entry']:.2f}" if h["entry"] else ""
+            st_s = f" · stop {h['stop']:.2f}" if h["stop"] else ""
+            tp_s = f" · target {h['target']:.2f}" if h["target"] else ""
+            c1, c2 = st.columns([5, 2])
+            c1.markdown(f"{'🟢' if h['direction'] == 'long' else '🔴'} **{h['direction'].upper()} {h['symbol']}** × {h['qty']} {e_s}{st_s}{tp_s}")
+            if h["symbol"] in waiting:
+                c2.caption("closing… (sent within ~5 s)")
+            elif st.session_state.get("confirm_close") == h["symbol"]:
+                b1, b2 = c2.columns(2)
+                if b1.button("Confirm", key=f"cc_{h['symbol']}", type="primary"):
+                    ok = control.request_close(engine, h["symbol"])
+                    st.session_state.pop("confirm_close", None)
+                    st.toast("Closing at market – the scheduler sends it within ~5 s" if ok else "Already closing")
+                    st.rerun()
+                if b2.button("Cancel", key=f"cx_{h['symbol']}"):
+                    st.session_state.pop("confirm_close", None)
+                    st.rerun()
+            elif c2.button(f"Close {h['symbol']}", key=f"cl_{h['symbol']}"):
+                st.session_state["confirm_close"] = h["symbol"]
+                st.rerun()
         recent = [r for r in control.list_pending(engine, None) if r.status in {"executed", "failed", "rejected"}][:4]
+        gone = [r for r in control.list_close_requests(engine, None) if r.status in {"done", "failed", "expired"}][:2]
+        for r in gone:
+            st.caption(f"Manual close {r.symbol}: {r.status}" + (f" ({r.note})" if r.note else ""))
         if recent:
             st.caption("Recent: " + "  ·  ".join(
                 f"{r.symbol} {r.direction} – {r.status}" + (f" ({r.note})" if r.status == "failed" and r.note else "") for r in recent))
         st.caption("Approved orders are sent by the scheduler (`python -m src.scheduler.run_loop`) within about 10 seconds; "
-                   "positions are always closed by the Pine exit rules and flattened before the close.")
+                   "open positions also close on the Pine exit rules, the take-profit or stop at the broker, and are flattened before the close.")
 
 
 trade_control()

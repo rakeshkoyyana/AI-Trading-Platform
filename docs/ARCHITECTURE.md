@@ -37,6 +37,10 @@ flowchart LR
 4. **Approvals** – the dashboard writes your Approve / Reject; the scheduler's 10-second job re-validates (window, position limits, daily loss, price vs. stop) and only then sends the order.
 5. **Protection** – each entry carries a broker-side protective stop (OTO). Positions are flattened 5 minutes before the close; no new entries in the last 15 minutes.
 
+## Shadow council
+
+A free, rule-based panel of analysts votes on every fresh signal and is logged next to the real decision (`council_votes`). It is advisory only; the Council tab grades it against outcomes so it can be promoted into the decision engine after the paper run if it proves useful. An LLM-based debate is parked for later (cost).
+
 ## Data honesty
 
 * SIP is exact but arrives ~15 minutes late on the free plan; IEX is real-time but covers only IEX's share of volume. The live tail uses IEX prices and rescales IEX volume by `k = median(SIP volume / IEX volume)` measured on overlapping bars. It is an **estimate**, shown faded in the chart (`live est.`), never written to the database, and replaced by the exact SIP bar later. Calibration quality (price error, volume-spike agreement) is logged to `system_events`.

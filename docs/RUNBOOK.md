@@ -50,6 +50,14 @@ sent to Alpaca immediately. The scheduler's approvals job (every 10 s) re-checks
 limit and that price has not already crossed the stop before it sends an approved order. Run `python -m src.scheduler.run_loop`
 for approvals to execute.
 
+### Shadow council (free, advisory)
+Every fresh signal also gets rule-based analyst votes (momentum room before the RSI exit, volume, structure, premium/discount,
+order block/FVG, higher timeframes, sentiment). They are stored in `council_votes` next to what the engine actually did and are
+shown on Ask cards, but they **never change a decision**. The **Council (shadow)** tab grades them: win rate for
+agree / mixed / disagree and per analyst, from the paper-run log and (as an instant sanity check) from stored labelled history.
+After 2–4 weeks, promote it to a real filter only if agreement clearly predicts wins (verdict thresholds are fixed in advance
+in `src/decision_engine/council.py`). An LLM debate (bull/bear, news/fundamentals analysts) is parked for later because it costs money.
+
 ### Exits: Pine rules + protective stop (`EXIT_MODE=pine`)
 Entries carry only a broker-side **protective stop** (OTO order). Positions are closed by the Pine strategy's own rules on the first
 closed bar where `RSI ≥ 70` (long) / `RSI ≤ 30` (short) or the EMA 9/21 trend flips against the position, which is also what the

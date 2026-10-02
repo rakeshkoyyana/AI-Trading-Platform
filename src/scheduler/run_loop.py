@@ -27,6 +27,7 @@ from src.data_ingestion.backfill import backfill, load_bars
 from src.data_ingestion.common import TIMEFRAME_MINUTES
 from src.data_ingestion.live_tail import with_live_tail
 from src.db.schema import ModelPrediction, Trade, get_engine, init_db, session_scope
+from src.decision_engine import council
 from src.decision_engine.engine import AccountState, Decision, pine_exit_reason, should_trade
 from src.execution import control
 from src.execution.base import Broker
@@ -312,6 +313,9 @@ class TradingCycle:
                 with session_scope(self.engine) as sx:
                     sx.add(ModelPrediction(signal_id=sig_id, probability=d.probability,
                                            model_version=(bundle or {}).get("version", "none")))
+        action = "traded" if d.trade and mode == "auto" else ("pending" if d.trade and mode == "ask" else f"blocked:{d.blocked_by}")
+        if res["signal"]:
+            self._shadow_council(sym, ctx, bars, d, sentiment, action)
         if not d.trade:
             return res
 
@@ -326,6 +330,21 @@ class TradingCycle:
         out = self._execute(d, sig_id, state)
         res.update(out)
         return res
+
+    def _shadow_council(self, sym, ctx, bars, d, sentiment, action) -> None:
+        """Free rule-based analyst votes, logged beside the real decision. Advisory: never alters it, never raises."""
+        try:
+            from src.smc_logic.pipeline import FEATURE_COLS
+
+            row = ctx.iloc[-1]
+            feats = {c: row[c] for c in FEATURE_COLS}
+            res = council.council_for(feats, row["signal_event"], bars=bars, sentiment=sentiment)
+            st = pd.Timestamp(row["timestamp"]).to_pydatetime()
+            council.record_vote(self.engine, sym, self.s.timeframe, st, row["signal_event"], res, action)
+            alerts.log_event("council", f"{sym} {row['signal_event']}: council {res['verdict']} ({res['score']:+.2f}) "
+                             f"vs engine {action}", self.engine)
+        except Exception as exc:  # noqa: BLE001
+            alerts.log_event("council", f"{sym}: shadow council failed: {exc}", self.engine)
 
     # -------------------------------------------------------------- approvals
     def process_approvals(self, now: datetime | None = None, force: bool = False) -> list[dict]:

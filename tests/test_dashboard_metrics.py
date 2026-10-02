@@ -105,6 +105,6 @@ def test_app_renders_on_empty_and_populated_db(tmp_path, monkeypatch):
         st.cache_data.clear()
         at = AppTest.from_file(str(APP), default_timeout=120).run()
         assert not at.exception, [e.value for e in at.exception]
-        assert [x.label for x in at.tabs] == ["Scanner", "Trades", "Performance", "Decision log", "ML model", "System", "Settings"]
+        assert [x.label for x in at.tabs] == ["Scanner", "Trades", "Performance", "Decision log", "Council (shadow)", "ML model", "System", "Settings"]
     finally:
         cfg.get_settings.cache_clear()

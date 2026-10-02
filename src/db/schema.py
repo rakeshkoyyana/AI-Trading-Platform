@@ -155,6 +155,25 @@ class PendingOrder(Base):
     trade_id: Mapped[int | None] = mapped_column(ForeignKey("trades.id"), nullable=True)
 
 
+class CouncilVote(Base):
+    """Shadow analyst-council votes for a fresh signal. Logged beside the real decision; never changes it."""
+
+    __tablename__ = "council_votes"
+    __table_args__ = (UniqueConstraint("symbol", "signal_time", "direction", name="uq_council"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    timeframe: Mapped[str] = mapped_column(String(8), default="15Min")
+    signal_time: Mapped[datetime] = mapped_column(DateTime)
+    direction: Mapped[str] = mapped_column(String(8))
+    votes_json: Mapped[str | None] = mapped_column(String(4000), nullable=True)
+    score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    verdict: Mapped[str | None] = mapped_column(String(12), nullable=True)  # agree | mixed | disagree
+    action: Mapped[str | None] = mapped_column(String(40), nullable=True)  # traded | pending | blocked:<code> | off
+    trade_id: Mapped[int | None] = mapped_column(ForeignKey("trades.id"), nullable=True)
+
+
 class ModelPrediction(Base):
     __tablename__ = "model_predictions"
 

@@ -32,6 +32,7 @@ from src.dashboard import theme as T
 from src.dashboard.chart_component import chart_html
 from src.data_ingestion.backfill import latest_bar_time, load_bars
 from src.data_ingestion.on_demand import ensure_symbol_data
+from src.decision_engine import council
 from src.execution import control
 from src.db.schema import get_engine, init_db
 
@@ -262,6 +263,10 @@ def trade_control():
             if c3.button("Reject", key=f"rj_{p.id}"):
                 control.decide(engine, p.id, False)
                 st.rerun()
+            cv = council.get_vote(engine, p.symbol, p.signal_time) if p.signal_time else None
+            if cv is not None:
+                icon = {"agree": "✅", "mixed": "➖", "disagree": "⚠️"}.get(cv.verdict, "")
+                c1.caption(f"{icon} Council (shadow, advisory): **{cv.verdict}** ({cv.score:+.2f})")
             with c1.expander("Why this signal"):
                 import json as _json
 
@@ -366,8 +371,44 @@ with right:
             f'<div class="scroll" style="max-height:250px">{T.decision_list(dec, utc_now())}</div></div>')
 
 # ------------------------------------------------------------------ tabs
-tab_scan, tab_trades, tab_perf, tab_dec, tab_ml, tab_sys, tab_set = st.tabs(
-    ["Scanner", "Trades", "Performance", "Decision log", "ML model", "System", "Settings"])
+tab_scan, tab_trades, tab_perf, tab_dec, tab_council, tab_ml, tab_sys, tab_set = st.tabs(
+    ["Scanner", "Trades", "Performance", "Decision log", "Council (shadow)", "ML model", "System", "Settings"])
+
+# ---- Council (shadow)
+with tab_council:
+    st.caption("Free, rule-based analyst votes on every fresh signal (momentum room, volume, structure, premium/discount, order blocks/FVG, "
+               "higher timeframes, sentiment). **Advisory only: it never changes a decision.** Judge it by whether agreement predicts "
+               "wins; verdict thresholds are fixed in advance (agree ≥ +0.34, disagree ≤ −0.20).")
+
+    @st.cache_data(ttl=120)
+    def _council_frames(db: str, stamp: str):
+        return council.logged_votes_frame(engine), council.historical_votes_frame(engine)
+
+    live_df, hist_df = _council_frames(DB, stamp)
+
+    def _show(title: str, df: pd.DataFrame, empty: str):
+        sm = council.summarize_votes(df)
+        st.markdown(f"**{title}**")
+        if not sm["n"]:
+            st.info(empty)
+            return
+        st.caption(f"{sm['n']} labelled signals · overall win rate {sm['base_win']:.0%}"
+                   + (" · small sample: treat as noise until n ≳ 100" if sm["n"] < 100 else ""))
+        c1, c2 = st.columns(2)
+        c1.dataframe(sm["verdicts"], hide_index=True, width="stretch", column_config={
+            "win_rate": st.column_config.NumberColumn("win rate", format="percent"),
+            "lift_vs_all": st.column_config.NumberColumn("vs all signals", format="%+.1f%%")})
+        c2.dataframe(sm["analysts"], hide_index=True, width="stretch", column_config={
+            "win_rate": st.column_config.NumberColumn("win rate", format="percent")})
+
+    _show("Paper-run shadow log (the real test)", live_df,
+          "No shadow votes with a known outcome yet. Votes are logged when the scheduler sees a signal; outcomes arrive after the post-close labelling.")
+    if not live_df.empty:
+        st.markdown("**Latest council calls vs what the engine did**")
+        show = live_df.sort_values("time", ascending=False).head(25)[["time", "symbol", "direction", "verdict", "score", "action", "label"]]
+        st.dataframe(show.rename(columns={"label": "won?"}), hide_index=True, width="stretch")
+    _show("History check (feature-based votes on stored, labelled signals; no HTF / sentiment)", hist_df,
+          "No labelled signals stored yet. Run the backfill + `python -m src.smc_logic.backfill_signals`.")
 
 # ---- Scanner
 with tab_scan:

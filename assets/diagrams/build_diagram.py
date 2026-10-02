@@ -53,6 +53,7 @@ fin = box(320, 340, 250, 84, "FinBERT sentiment", "scores each headline", "eng")
 db = box(610, 90, 230, 210, "SQLite", "bars · signals · trades|ticker modes|pending approvals|system events")
 tc = box(890, 90, 250, 100, "Triple confirmation + SMC", "EMA 9/21 · RSI band · volume spike|order blocks · FVG · BOS", "eng")
 ml = box(890, 215, 250, 84, "ML win-probability", "used only if it beats raw signals OOS", "eng")
+cnl = box(890, 425, 250, 66, "Shadow council (free)", "votes logged beside each decision|advisory · graded on Council tab", "eng")
 dec = box(1190, 90, 380, 100, "Decision engine", "risk gates · sizing · protective stop|no fresh signal → nothing happens", "gate")
 mode = box(1190, 215, 380, 84, "Trade mode (per ticker, set on dashboard)", "Off = skip   ·   Ask = you approve   ·   Auto = send", "ctl")
 

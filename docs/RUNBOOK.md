@@ -138,3 +138,13 @@ Treat results as noise until >= 30–50 closed trades.
 Push to GitHub, create an app pointing at `src/dashboard/app.py`, add secrets as env vars. The dashboard is
 read-only, but SQLite lives on the machine running the scheduler — for a cloud dashboard point `DATABASE_URL`
 at a hosted DB (e.g. Supabase Postgres) on both sides, or just run the dashboard locally.
+
+## Desktop app (macOS, no terminal)
+
+Run once: `bash scripts/install_desktop_app.sh` — puts **AlphaWave** and **Stop AlphaWave** (with the logo) on your Desktop.
+
+- Double-click **AlphaWave**: starts the scheduler and dashboard in the background (skips whatever is already running), keeps the Mac awake with `caffeinate -dims` while the scheduler lives, then opens http://localhost:8501. Logs: `logs/scheduler.log`, `logs/dashboard.log`.
+- Double-click **Stop AlphaWave**: stops both. Open positions keep their stop/target at the broker.
+- The apps call the scripts in this repo, so `git pull` updates them. Re-run the installer only if you move the repo.
+- First launch: if macOS blocks it, right-click the app > Open once. Needs a working `venv` (or `.venv`) with the requirements installed.
+- After a `git pull`, double-click **Stop AlphaWave** then **AlphaWave** to load new code.

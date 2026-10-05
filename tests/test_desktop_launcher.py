@@ -114,6 +114,16 @@ def test_running_app_actions_open_restart_stop(fake_repo):
             os.kill(int(pid), 0)
 
 
+def test_app_mode_defers_dialog_to_the_app(fake_repo):
+    port = _free_port()
+    assert _run(fake_repo, "alphawave_launcher.sh", port).returncode == 0
+    env = {**os.environ, "ALPHAWAVE_REPO": str(fake_repo), "ALPHAWAVE_PORT": str(port), "ALPHAWAVE_NO_PULL": "1", "ALPHAWAVE_APPLET": "1"}
+    r = subprocess.run(["bash", str(fake_repo / "scripts/alphawave_launcher.sh")], env=env, capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0 and r.stdout.strip().splitlines()[-1] == "ALPHAWAVE_ASK"
+    r = subprocess.run(["bash", str(fake_repo / "scripts/alphawave_launcher.sh")], env={**env, "ALPHAWAVE_ACTION": "stop"}, capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0 and r.stdout.strip().splitlines()[-1].startswith("Stopped")
+
+
 def test_launcher_reports_missing_python_env(fake_repo):
     (fake_repo / "venv/bin/python").write_text("#!/bin/bash\nexit 1\n")
     r = _run(fake_repo, "alphawave_launcher.sh", _free_port())

@@ -151,6 +151,7 @@ Double-click it any time. It:
 
 So after a merge: just double-click AlphaWave again. Logs: `logs/scheduler.log`, `logs/dashboard.log`, `logs/update.log`.
 
+- Dialogs and banners come from the AlphaWave app itself (so they show the logo). The first time, macOS may ask to allow notifications for AlphaWave: allow it (System Settings > Notifications > AlphaWave).
 - It does not run `caffeinate`; keep your Mac awake yourself.
 - Starting/restarting only affects the local processes. It never closes positions or orders at the broker.
 - To stop: double-click AlphaWave and choose **Stop** (closing the browser tab does not stop anything). Terminal alternative: `bash scripts/alphawave_stop.sh`.

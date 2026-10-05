@@ -34,6 +34,9 @@ class Settings:
     finnhub_api_key: str = ""
     newsapi_key: str = ""
     discord_webhook_url: str = ""
+    discord_bot_token: str = ""  # optional: lets you Approve / Reject from Discord buttons
+    discord_channel_id: int = 0
+    discord_approver_ids: tuple = ()  # Discord user IDs allowed to click Approve / Reject
 
     # --- trading mode / safety --------------------------------------------
     trading_mode: str = "paper"  # "paper" | "live"
@@ -128,6 +131,9 @@ def get_settings() -> Settings:
         finnhub_api_key=env("FINNHUB_API_KEY", ""),
         newsapi_key=env("NEWSAPI_KEY", ""),
         discord_webhook_url=env("DISCORD_WEBHOOK_URL", ""),
+        discord_bot_token=env("DISCORD_BOT_TOKEN", ""),
+        discord_channel_id=int(env("DISCORD_CHANNEL_ID", "0") or 0),
+        discord_approver_ids=tuple(int(x) for x in (env("DISCORD_APPROVER_IDS", "") or "").replace(" ", "").split(",") if x),
         trading_mode=mode,
         tickers=_csv(env("TICKERS"), DEFAULT_TICKERS),
         timeframe=env("TIMEFRAME", "15Min"),

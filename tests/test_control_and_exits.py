@@ -214,6 +214,32 @@ def test_ask_mode_queues_instead_of_trading(world):
     assert any("APPROVE?" in m for _l, m in world["msgs"])
 
 
+class _FakeBot:
+    def __init__(self, ok=True):
+        self.ok, self.posts = ok, []
+
+    def post_proposal(self, pending_id, text):
+        self.posts.append((pending_id, text))
+        return self.ok
+
+
+def test_discord_bot_gets_the_proposal_with_buttons(world):
+    c = world["make"]()
+    c.approvals_bot = _FakeBot(ok=True)
+    for _out, _now in _replay(world, c):
+        pass
+    assert c.approvals_bot.posts and all("APPROVE?" in t for _i, t in c.approvals_bot.posts)
+    assert not any("APPROVE?" in m for _l, m in world["msgs"])  # no duplicate webhook text
+
+
+def test_proposal_falls_back_to_webhook_if_bot_cannot_post(world):
+    c = world["make"]()
+    c.approvals_bot = _FakeBot(ok=False)
+    for _out, _now in _replay(world, c):
+        pass
+    assert any("APPROVE?" in m and "dashboard" in m for _l, m in world["msgs"])
+
+
 def test_off_mode_never_trades_or_queues(world):
     c = world["make"]()
     for sym in S.tickers:

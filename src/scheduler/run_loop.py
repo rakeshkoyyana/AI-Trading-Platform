@@ -28,6 +28,7 @@ from src.data_ingestion.backfill import backfill, load_bars
 from src.data_ingestion.common import TIMEFRAME_MINUTES
 from src.data_ingestion.live_tail import with_live_tail
 from src.db.schema import Bar, ModelPrediction, Trade, get_engine, init_db, session_scope
+from src.discord_approvals import DiscordApprovals
 from src.decision_engine import council
 from src.decision_engine.engine import AccountState, Decision, pine_exit_reason, should_trade
 from src.execution import control
@@ -83,6 +84,7 @@ class TradingCycle:
         self.broker = broker
         self.fetch = fetch
         self.notify = lambda msg, level="info": notify(msg, level, engine=self.engine)
+        self.approvals_bot = None  # set by main() when the Discord approval bot is configured
         self.bundle = bundle
         self.sentiment_fn = sentiment_fn or (lambda sym: get_rolling_sentiment(sym, engine=self.engine))
         self.state_path = state_path or STATE_PATH
@@ -325,8 +327,12 @@ class TradingCycle:
             if pid:
                 res["pending"] = pid
                 tgt = f"stop {d.stop_loss}" + ("" if d.take_profit is None else f", target {d.take_profit}")
-                self.notify(f"APPROVE? {d.direction.upper()} {sym} x{d.qty} @ ~{d.entry:.2f} | {tgt} | open the "
-                            f"dashboard to approve (expires in {self.s.approval_ttl_minutes} min)", "trade")
+                text = (f"APPROVE? {d.direction.upper()} {sym} x{d.qty} @ ~{d.entry:.2f} | {tgt} | "
+                        f"expires in {self.s.approval_ttl_minutes} min")
+                if self.approvals_bot and self.approvals_bot.post_proposal(pid, f"📈 **[{self.s.trading_mode.upper()}]** {text}"):
+                    alerts.log_event("trade", text, self.engine)  # buttons posted in Discord; dashboard works too
+                else:
+                    self.notify(text + " | open the dashboard to approve", "trade")
             return res
         out = self._execute(d, sig_id, state)
         res.update(out)
@@ -598,6 +604,11 @@ def main() -> None:
     if a.once:
         print(json.dumps(cycle.run_cycle(force=a.force), indent=2, default=str))
         return
+    if DiscordApprovals.configured(s):
+        bot = DiscordApprovals(s.discord_bot_token, s.discord_channel_id, s.discord_approver_ids, cycle.engine)
+        if bot.start():
+            cycle.approvals_bot = bot
+            print("[run_loop] Discord approval buttons enabled")
     install_stop_handlers()  # before announcing "started", so a stop right after is still reported
     try:
         alerts.log_event("session", f"scheduler process started ({mode})", cycle.engine)

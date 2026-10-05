@@ -20,7 +20,8 @@ main() {
   mkdir -p "$RUN_DIR" "$LOG_DIR"
 
   notify() {
-    command -v osascript >/dev/null 2>&1 &&
+    # When run by the AlphaWave app (ALPHAWAVE_APPLET=1) the app itself shows the banner so it carries the logo.
+    [ "${ALPHAWAVE_APPLET:-0}" != "1" ] && command -v osascript >/dev/null 2>&1 &&
       osascript -e "display notification \"$1\" with title \"AlphaWave\"" >/dev/null 2>&1
     echo "$1"
   }
@@ -82,6 +83,9 @@ main() {
   if [ -n "$running" ] && [ "$(cat "$RUN_DIR/version" 2>/dev/null)" = "$version" ]; then
     # Already running the latest code: ask what to do (ALPHAWAVE_ACTION=open|restart|stop skips the dialog).
     action="${ALPHAWAVE_ACTION:-}"
+    if [ -z "$action" ] && [ "${ALPHAWAVE_APPLET:-0}" = "1" ]; then
+      echo "ALPHAWAVE_ASK"; return 0   # the app shows the Open / Restart / Stop dialog, then calls us again with ALPHAWAVE_ACTION
+    fi
     if [ -z "$action" ] && command -v osascript >/dev/null 2>&1; then
       choice="$(osascript -e 'button returned of (display dialog "AlphaWave is running." & return & "Stopping only ends the local scheduler and dashboard; your positions and orders at the broker are not touched." buttons {"Stop", "Restart", "Open dashboard"} default button "Open dashboard" with title "AlphaWave")' 2>/dev/null)" \
         || return 0   # dialog cancelled: do nothing

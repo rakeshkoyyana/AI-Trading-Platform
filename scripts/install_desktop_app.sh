@@ -69,8 +69,27 @@ make_applet() {  # a real AppleScript applet: launches reliably from Finder (mac
   local app="$DEST/AlphaWave.app" src; src="$(mktemp -d)/AlphaWave.applescript"
   rm -rf "$app"
   cat > "$src" <<AS
+-- The app (not a shell child) shows dialogs and banners, so they carry the AlphaWave logo.
 on run
-	do shell script "mkdir -p ~/Library/Logs; ALPHAWAVE_REPO=" & quoted form of "$REPO" & " /bin/bash " & quoted form of "$REPO/scripts/alphawave_launcher.sh" & " >> ~/Library/Logs/AlphaWave-app.log 2>&1 &"
+	set repoPath to "$REPO"
+	set base to "ALPHAWAVE_REPO=" & quoted form of repoPath & " ALPHAWAVE_APPLET=1 "
+	set cmd to " /bin/bash " & quoted form of (repoPath & "/scripts/alphawave_launcher.sh") & " 2>&1 | tee -a ~/Library/Logs/AlphaWave-app.log"
+	try
+		do shell script "mkdir -p ~/Library/Logs"
+		set out to do shell script (base & cmd)
+		if out contains "ALPHAWAVE_ASK" then
+			set r to display dialog "AlphaWave is running." & return & "Stopping only ends the local scheduler and dashboard; your positions and orders at the broker are not touched." buttons {"Stop", "Restart", "Open dashboard"} default button "Open dashboard" with title "AlphaWave"
+			set b to button returned of r
+			set act to "open"
+			if b is "Stop" then set act to "stop"
+			if b is "Restart" then set act to "restart"
+			set out to do shell script (base & "ALPHAWAVE_ACTION=" & act & " ALPHAWAVE_NO_PULL=1 " & cmd)
+		end if
+		set msg to last paragraph of out
+		if msg is not "" then display notification msg with title "AlphaWave"
+	on error errMsg number errNum
+		if errNum is not -128 then display notification "Problem: " & errMsg with title "AlphaWave"
+	end try
 end run
 AS
   osacompile -o "$app" "$src" || return 1

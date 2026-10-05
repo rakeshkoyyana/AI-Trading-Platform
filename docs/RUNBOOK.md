@@ -157,3 +157,5 @@ So after a merge: just double-click AlphaWave again. Logs: `logs/scheduler.log`,
 - If the icon does nothing, check `~/Library/Logs/AlphaWave-app.log` and `logs/dashboard.log`. The installer also runs a setup check (Python env) and prints any problem.
 - First launch: if macOS blocks it, right-click the app > Open once. Needs a working `venv` (or `.venv`).
 - Re-run the installer only if you move the repo. It also removes the old "Stop AlphaWave" icon if you installed an earlier version.
+
+**Discord stop alert:** the scheduler posts "Scheduler stopped (SIGTERM / Ctrl+C)" when it is stopped (including via the AlphaWave Stop choice) and "Scheduler crashed: ..." on an unexpected error. A hard kill, power loss or Mac sleep cannot send an alert.

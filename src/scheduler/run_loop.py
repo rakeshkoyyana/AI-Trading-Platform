@@ -598,13 +598,49 @@ def main() -> None:
     if a.once:
         print(json.dumps(cycle.run_cycle(force=a.force), indent=2, default=str))
         return
-    alerts.log_event("session", f"scheduler process started ({mode})", cycle.engine)
-    cycle.notify(f"Scheduler started ({mode}, {cycle.broker.name}).", "info")
-    sched = build_scheduler(cycle)
+    install_stop_handlers()  # before announcing "started", so a stop right after is still reported
+    try:
+        alerts.log_event("session", f"scheduler process started ({mode})", cycle.engine)
+        cycle.notify(f"Scheduler started ({mode}, {cycle.broker.name}).", "info")
+        sched = build_scheduler(cycle)
+    except SystemExit:  # stopped while starting up
+        cycle.notify(f"Scheduler {_STOP_REASON['text']}.", "warning")
+        return
+    run_until_stopped(sched, cycle)
+
+
+_STOP_REASON = {"text": "stopped"}
+
+
+def install_stop_handlers() -> None:
+    """Turn kill / launcher Stop / closed terminal into a clean SystemExit so the stop alert can be sent."""
+    import signal
+
+    def _on_signal(signum, _frame):
+        _STOP_REASON["text"] = f"stopped ({signal.Signals(signum).name})"
+        raise SystemExit(0)
+
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        try:
+            signal.signal(sig, _on_signal)
+        except (ValueError, OSError):  # not the main thread / unsupported platform
+            pass
+
+
+def run_until_stopped(sched, cycle) -> None:
+    """Run the blocking scheduler and always tell Discord why it ended (Ctrl+C, kill/Stop, or a crash)."""
+    reason = _STOP_REASON
+    install_stop_handlers()
     try:
         sched.start()
-    except (KeyboardInterrupt, SystemExit):
-        cycle.notify("Scheduler stopped.", "info")
+    except KeyboardInterrupt:
+        reason["text"] = "stopped (Ctrl+C)"
+    except SystemExit:
+        pass
+    except Exception as exc:  # noqa: BLE001 - report the crash, then let it propagate
+        cycle.notify(f"Scheduler crashed: {exc!r}", "error")
+        raise
+    cycle.notify(f"Scheduler {reason['text']}. Open positions keep their stop/target at the broker.", "warning")
 
 
 if __name__ == "__main__":

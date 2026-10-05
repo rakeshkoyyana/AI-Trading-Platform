@@ -245,3 +245,52 @@ def test_open_position_drag_needs_apply_and_posts_a_modify(tmp_path_factory, bro
     m = pg.evaluate("window.__msgs.map(m => m.alphawave).filter(Boolean)")[-1]
     assert m["type"] == "modify_position" and m["symbol"] == "AAA" and m["stop"] == pytest.approx(nb["edit"]["stop"])
     assert pg.errors == []
+
+
+# ------------------------------------------------- Alpaca order lookup (regression: stop leg hidden by nested query)
+class _O:
+    def __init__(self, id, symbol, side, otype, status, legs=None):
+        from types import SimpleNamespace as N
+        self.id, self.symbol, self.qty, self.filled_qty, self.filled_avg_price = id, symbol, 10, 0, None
+        self.side, self.status, self.order_type, self.legs = N(value=side), N(value=status), N(value=otype), legs or []
+
+
+class _FakeAlpaca:
+    """Mimics Alpaca: after the parent fills, a nested query returns nothing; the flat query lists each live leg."""
+    def __init__(self):
+        self.replaced = []
+
+    def get_orders(self, req):
+        if req.nested:
+            return []
+        return [_O("stop1", "ASTS", "buy", "stop", "held"), _O("tp1", "ASTS", "buy", "limit", "new")]
+
+    def get_all_positions(self):
+        from types import SimpleNamespace as N
+        return [N(symbol="ASTS", qty=-10, avg_entry_price=58.0, current_price=57.0, market_value=-570, unrealized_pl=10, side=N(value="short"))]
+
+    def replace_order_by_id(self, oid, req):
+        self.replaced.append((oid, req))
+
+
+def test_modify_finds_stop_and_target_legs_even_when_nested_query_hides_them():
+    from src.execution.alpaca_execution import AlpacaBroker
+    fake = _FakeAlpaca()
+    b = AlpacaBroker(S, client=fake)
+    b.get_positions = lambda: [type("P", (), dict(symbol="ASTS", qty=-10))()]
+    ok, msg = b.modify_exit_levels("ASTS", 60.5, 55.0)
+    assert ok, msg
+    assert [o for o, _ in fake.replaced] == ["stop1", "tp1"]
+    assert b.protected_symbols() == {"ASTS"}
+
+
+def test_failed_modify_is_surfaced_on_the_dashboard(engine):
+    from src.dashboard import alerts_ui
+    from src.db.schema import ModifyRequest
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    rid, _ = None, None
+    with session_scope(engine) as sx:
+        sx.add(ModifyRequest(created_at=now, symbol="ASTS", stop=60.0, target=None, status="failed", note="broker refused"))
+    html = alerts_ui.modify_failure_html(control.list_modify_requests(engine, "failed"), now)
+    assert "ASTS" in html and "NOT applied" in html and "broker refused" in html
+    assert alerts_ui.modify_failure_html([], now) == ""

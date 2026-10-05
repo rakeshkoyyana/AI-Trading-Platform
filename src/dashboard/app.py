@@ -226,6 +226,9 @@ def trade_control():
     fresh = alerts_ui.new_alert_ids(pend, seen)
     if pend:
         st.html(alerts_ui.banner_html(pend, utc_now()))
+    _mf = alerts_ui.modify_failure_html(control.list_modify_requests(engine, "failed"), utc_now())
+    if _mf:
+        st.html(_mf)
     if fresh:
         seen.update(fresh)
         if alert_sound:

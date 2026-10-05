@@ -48,3 +48,14 @@ def banner_html(pending: list, now) -> str:
 def new_alert_ids(pending: list, seen: set) -> list[int]:
     """Pending ids not yet announced in this browser session."""
     return [p.id for p in pending if p.id not in seen]
+
+
+def modify_failure_html(requests: list, now, window_s: int = 600) -> str:
+    """Warning for stop / target changes that were NOT applied at the broker (empty string when none recent)."""
+    recent = [r for r in requests if r.status == "failed" and (now - r.created_at).total_seconds() <= window_s]
+    if not recent:
+        return ""
+    r = recent[0]
+    more = f" (+{len(recent) - 1} earlier)" if len(recent) > 1 else ""
+    return (f'<div class="banner bad"><b>{T.esc(r.symbol)}: stop/target change was NOT applied</b> - the old levels are still '
+            f'active at the broker. {T.esc(r.note or "unknown reason")}{more}</div>')

@@ -104,20 +104,23 @@ class AlpacaBroker(Broker):
         """Every live order, bracket legs included, as one flat de-duplicated list.
 
         Alpaca rolls bracket legs up under their (already filled) parent when nested=True, and the parent is not
-        'open' any more, so a nested-only query can miss a live stop. The flat query lists each live leg as its own
-        order, so ask both ways and merge."""
+        'open' any more, so a nested-only query can miss a live stop. Worse, a bracket's STOP leg sits in status
+        'held' until it is triggered, and Alpaca's 'open' filter does not list held orders at all: only the take-profit
+        leg shows up. The held stop is only visible nested under its filled parent in an ALL-status query. So ask
+        three ways (open flat, open nested, all nested) and merge."""
         from alpaca.trading.enums import QueryOrderStatus
         from alpaca.trading.requests import GetOrdersRequest
 
         seen: dict[str, OrderResult] = {}
-        for nested in (False, True):
-            kw = dict(status=QueryOrderStatus.OPEN, nested=nested, limit=500)
+        for status, nested in ((QueryOrderStatus.OPEN, False), (QueryOrderStatus.OPEN, True), (QueryOrderStatus.ALL, True)):
+            kw = dict(status=status, nested=nested, limit=500)
             if symbols:
                 kw["symbols"] = list(symbols)
             for o in self.client.get_orders(GetOrdersRequest(**kw)):
                 for x in [o, *(getattr(o, "legs", None) or [])]:
                     r = _result(x)
-                    seen.setdefault(r.id, r)
+                    if r.status in self._LIVE:  # the ALL query also returns every finished order; keep only the live ones
+                        seen.setdefault(r.id, r)
         return list(seen.values())
 
     def protected_symbols(self) -> set[str] | None:

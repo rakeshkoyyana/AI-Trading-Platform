@@ -256,31 +256,31 @@ class _O:
 
 
 class _FakeAlpaca:
-    """Mimics Alpaca: after the parent fills, a nested query returns nothing; the flat query lists each live leg."""
+    """Mimics Alpaca for a filled bracket: the 'open' filter lists only the take-profit leg (the stop leg is 'held' and
+    hidden from it); the held stop leg is visible only nested under its filled parent in an ALL-status query."""
     def __init__(self):
         self.replaced = []
 
     def get_orders(self, req):
-        if req.nested:
-            return []
-        return [_O("stop1", "ASTS", "buy", "stop", "held"), _O("tp1", "ASTS", "buy", "limit", "new")]
-
-    def get_all_positions(self):
-        from types import SimpleNamespace as N
-        return [N(symbol="ASTS", qty=-10, avg_entry_price=58.0, current_price=57.0, market_value=-570, unrealized_pl=10, side=N(value="short"))]
+        status = getattr(req.status, "value", str(req.status)).lower()
+        if "open" in status:
+            return [_O("tp1", "ASTS", "sell", "limit", "new")] if not req.nested else []
+        parent = _O("p1", "ASTS", "buy", "market", "filled",
+                    legs=[_O("tp1", "ASTS", "sell", "limit", "new"), _O("stop1", "ASTS", "sell", "stop", "held")])
+        return [parent] if req.nested else []
 
     def replace_order_by_id(self, oid, req):
         self.replaced.append((oid, req))
 
 
-def test_modify_finds_stop_and_target_legs_even_when_nested_query_hides_them():
+def test_modify_finds_the_held_stop_leg_that_the_open_filter_never_lists():
     from src.execution.alpaca_execution import AlpacaBroker
     fake = _FakeAlpaca()
     b = AlpacaBroker(S, client=fake)
-    b.get_positions = lambda: [type("P", (), dict(symbol="ASTS", qty=-10))()]
-    ok, msg = b.modify_exit_levels("ASTS", 60.5, 55.0)
+    b.get_positions = lambda: [type("P", (), dict(symbol="ASTS", qty=86))()]   # a long position: exits are sells
+    ok, msg = b.modify_exit_levels("ASTS", 56.9, 61.0)
     assert ok, msg
-    assert [o for o, _ in fake.replaced] == ["stop1", "tp1"]
+    assert sorted(o for o, _ in fake.replaced) == ["stop1", "tp1"]
     assert b.protected_symbols() == {"ASTS"}
 
 

@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Create double-click AlphaWave apps on your Mac Desktop (macOS only).
-#   AlphaWave.app       starts the scheduler + dashboard (if not already running) and opens the dashboard
-#   Stop AlphaWave.app  stops the scheduler + dashboard
+# Create one double-click AlphaWave app on your Mac Desktop (macOS only).
+# Double-click: pulls latest main, starts or restarts the scheduler + dashboard as needed, opens the dashboard.
 # Run once:  bash scripts/install_desktop_app.sh   [optional: target folder, default ~/Desktop]
 # The apps call the scripts in this repo, so `git pull` updates them; re-run only if you move the repo.
 set -eu
@@ -67,8 +66,8 @@ PL
 
 mkdir -p "$DEST"
 chmod +x "$REPO/scripts/alphawave_launcher.sh" "$REPO/scripts/alphawave_stop.sh"
-make_app "AlphaWave"      "com.alphawave.launcher" alphawave_launcher.sh
-make_app "Stop AlphaWave" "com.alphawave.stop"     alphawave_stop.sh
+rm -rf "$DEST/Stop AlphaWave.app"   # from an earlier version
+make_app "AlphaWave" "com.alphawave.launcher" alphawave_launcher.sh
 echo
-echo "Done. Double-click AlphaWave on your Desktop to start everything."
+echo "Done. Double-click AlphaWave on your Desktop. It also picks up new merges each time."
 echo "First launch: if macOS asks, right-click the app > Open once."

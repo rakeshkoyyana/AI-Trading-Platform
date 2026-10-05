@@ -35,12 +35,14 @@ def fake_repo(tmp_path):
         "exec python3 -m http.server $P --bind 127.0.0.1\n"
     )
     py.chmod(0o755)
+    g = lambda *a: subprocess.run(["git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t", *a], check=True, capture_output=True)
+    g("init", "-q", "-b", "main"); g("add", "-A"); g("commit", "-qm", "one")
     yield repo
     subprocess.run(["bash", str(repo / "scripts/alphawave_stop.sh")], env={**os.environ, "ALPHAWAVE_REPO": str(repo)})
 
 
 def _run(repo, script, port):
-    env = {**os.environ, "ALPHAWAVE_REPO": str(repo), "ALPHAWAVE_PORT": str(port)}
+    env = {**os.environ, "ALPHAWAVE_REPO": str(repo), "ALPHAWAVE_PORT": str(port), "ALPHAWAVE_NO_PULL": "1"}
     return subprocess.run(["bash", str(repo / "scripts" / script)], env=env, capture_output=True, text=True, timeout=60)
 
 
@@ -59,13 +61,32 @@ def test_start_is_idempotent_and_stop_cleans_up(fake_repo):
 
     r2 = _run(fake_repo, "alphawave_launcher.sh", port)  # second double-click
     assert r2.returncode == 0
-    assert "already running" in r2.stdout.lower()
+    assert "already running" in r2.stdout.lower()  # same code: no restart
     assert {n: (fake_repo / "data/run" / f"{n}.pid").read_text() for n in pids} == pids
 
+    assert "latest version" in r2.stdout.lower()
     r3 = _run(fake_repo, "alphawave_stop.sh", port)
     assert r3.returncode == 0 and "Stopped" in r3.stdout
     time.sleep(0.5)
     for pid in pids.values():
+        with pytest.raises(ProcessLookupError):
+            os.kill(int(pid), 0)
+
+
+def test_new_code_restarts_both_processes(fake_repo):
+    port = _free_port()
+    assert _run(fake_repo, "alphawave_launcher.sh", port).returncode == 0
+    old = {n: (fake_repo / "data/run" / f"{n}.pid").read_text() for n in ("scheduler", "dashboard")}
+    (fake_repo / "new_feature.txt").write_text("x")  # simulate a merge landing
+    subprocess.run(["git", "-C", str(fake_repo), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(fake_repo), "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "two"], check=True)
+    r = _run(fake_repo, "alphawave_launcher.sh", port)
+    assert r.returncode == 0 and "restarted" in r.stdout.lower(), r.stdout + r.stderr
+    new = {n: (fake_repo / "data/run" / f"{n}.pid").read_text() for n in old}
+    assert all(new[n] != old[n] for n in old)
+    for pid in new.values():
+        os.kill(int(pid), 0)
+    for pid in old.values():
         with pytest.raises(ProcessLookupError):
             os.kill(int(pid), 0)
 
@@ -80,7 +101,10 @@ def test_installer_builds_both_apps(fake_repo, tmp_path):
     dest = tmp_path / "Desktop"
     r = subprocess.run(["bash", str(fake_repo / "scripts/install_desktop_app.sh"), str(dest)], capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
-    for app, script in (("AlphaWave", "alphawave_launcher.sh"), ("Stop AlphaWave", "alphawave_stop.sh")):
+    (dest / "Stop AlphaWave.app").mkdir(parents=True)  # leftover from the first version
+    r = subprocess.run(["bash", str(fake_repo / "scripts/install_desktop_app.sh"), str(dest)], capture_output=True, text=True)
+    assert not (dest / "Stop AlphaWave.app").exists()
+    for app, script in (("AlphaWave", "alphawave_launcher.sh"),):
         run = dest / f"{app}.app/Contents/MacOS/run"
         assert os.access(run, os.X_OK) and script in run.read_text()
         assert (dest / f"{app}.app/Contents/Resources/repo_path").read_text() == str(fake_repo)

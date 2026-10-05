@@ -141,10 +141,18 @@ at a hosted DB (e.g. Supabase Postgres) on both sides, or just run the dashboard
 
 ## Desktop app (macOS, no terminal)
 
-Run once: `bash scripts/install_desktop_app.sh` — puts **AlphaWave** and **Stop AlphaWave** (with the logo) on your Desktop.
+Run once: `bash scripts/install_desktop_app.sh` — puts one **AlphaWave** icon (with the logo) on your Desktop.
 
-- Double-click **AlphaWave**: starts the scheduler and dashboard in the background (skips whatever is already running), keeps the Mac awake with `caffeinate -dims` while the scheduler lives, then opens http://localhost:8501. Logs: `logs/scheduler.log`, `logs/dashboard.log`.
-- Double-click **Stop AlphaWave**: stops both. Open positions keep their stop/target at the broker.
-- The apps call the scripts in this repo, so `git pull` updates them. Re-run the installer only if you move the repo.
-- First launch: if macOS blocks it, right-click the app > Open once. Needs a working `venv` (or `.venv`) with the requirements installed.
-- After a `git pull`, double-click **Stop AlphaWave** then **AlphaWave** to load new code.
+Double-click it any time. It:
+1. Pulls the latest `main` (only if you're on a clean `main`; otherwise it skips the update).
+2. Starts the scheduler and dashboard if they aren't running.
+3. **Restarts both if new code arrived** (so merged features show up), or just opens the dashboard if nothing changed.
+4. Opens http://localhost:8501.
+
+So after a merge: just double-click AlphaWave again. Logs: `logs/scheduler.log`, `logs/dashboard.log`, `logs/update.log`.
+
+- It does not run `caffeinate`; keep your Mac awake yourself.
+- Starting/restarting only affects the local processes. It never closes positions or orders at the broker.
+- To stop the local processes (optional): `bash scripts/alphawave_stop.sh`.
+- First launch: if macOS blocks it, right-click the app > Open once. Needs a working `venv` (or `.venv`).
+- Re-run the installer only if you move the repo. It also removes the old "Stop AlphaWave" icon if you installed an earlier version.

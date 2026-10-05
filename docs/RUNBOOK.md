@@ -154,5 +154,6 @@ So after a merge: just double-click AlphaWave again. Logs: `logs/scheduler.log`,
 - It does not run `caffeinate`; keep your Mac awake yourself.
 - Starting/restarting only affects the local processes. It never closes positions or orders at the broker.
 - To stop: double-click AlphaWave and choose **Stop** (closing the browser tab does not stop anything). Terminal alternative: `bash scripts/alphawave_stop.sh`.
+- If the icon does nothing, check `~/Library/Logs/AlphaWave-app.log` and `logs/dashboard.log`. The installer also runs a setup check (Python env) and prints any problem.
 - First launch: if macOS blocks it, right-click the app > Open once. Needs a working `venv` (or `.venv`).
 - Re-run the installer only if you move the repo. It also removes the old "Stop AlphaWave" icon if you installed an earlier version.

@@ -26,14 +26,19 @@ main() {
   }
   alive() { [ -f "$1" ] && kill -0 "$(cat "$1" 2>/dev/null)" 2>/dev/null; }
   port_open() { (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null; }
-  stop_proc() {  # stop_proc <name>  (local process only)
-    local pf="$RUN_DIR/$1.pid" pid
-    if alive "$pf"; then
-      pid="$(cat "$pf")"; kill "$pid" 2>/dev/null
-      for _ in $(seq 1 20); do kill -0 "$pid" 2>/dev/null || break; sleep 0.5; done
-      kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null
-    fi
+  wait_dead() {  # wait_dead <pid> <seconds>: wait for exit, then force-kill (local process only)
+    local pid="$1" n=$(( $2 * 5 ))
+    for _ in $(seq 1 "$n"); do kill -0 "$pid" 2>/dev/null || return 0; sleep 0.2; done
+    kill -9 "$pid" 2>/dev/null
+  }
+  term_proc() {  # term_proc <name>: ask the process to stop; prints its old pid (empty if not running)
+    local pf="$RUN_DIR/$1.pid"
+    if alive "$pf"; then cat "$pf"; kill "$(cat "$pf")" 2>/dev/null; fi
     rm -f "$pf"
+  }
+  start_scheduler() {
+    nohup "$PY" -m src.scheduler.run_loop >>"$LOG_DIR/scheduler.log" 2>&1 &
+    echo $! >"$RUN_DIR/scheduler.pid"
   }
 
   # --- pull the latest main (only when it is safe: on main, no local edits, fast-forward) ----
@@ -44,7 +49,7 @@ main() {
       before="$(git rev-parse HEAD 2>/dev/null)"
       GIT_TERMINAL_PROMPT=0 git pull --ff-only -q >"$LOG_DIR/update.log" 2>&1 &
       gp=$!
-      for _ in $(seq 1 40); do kill -0 "$gp" 2>/dev/null || break; sleep 0.5; done
+      for _ in $(seq 1 100); do kill -0 "$gp" 2>/dev/null || break; sleep 0.2; done
       kill -0 "$gp" 2>/dev/null && kill "$gp" 2>/dev/null
       [ "$(git rev-parse HEAD 2>/dev/null)" != "$before" ] && pulled="yes"
     else
@@ -63,7 +68,7 @@ main() {
       "$PY" -m pip install -q -r requirements.txt >>"$LOG_DIR/update.log" 2>&1 && echo "$rh" >"$RUN_DIR/requirements.cksum"
     fi
   fi
-  if [ -z "$PY" ] || ! "$PY" -c "import streamlit, apscheduler" 2>/dev/null; then
+  if [ -z "$PY" ] || ! "$PY" -c "import importlib.util as u,sys; sys.exit(0 if all(u.find_spec(m) for m in ('streamlit','apscheduler')) else 1)" 2>/dev/null; then
     notify "Python environment not ready. In Terminal run: cd \"$REPO\" && python3 -m venv venv && venv/bin/pip install -r requirements.txt"
     return 1
   fi
@@ -83,23 +88,30 @@ main() {
       case "$choice" in Stop) action=stop;; Restart) action=restart;; *) action=open;; esac
     fi
     case "${action:-open}" in
-      stop)    stop_proc scheduler; stop_proc dashboard; notify "Stopped the scheduler and dashboard. Positions at the broker are unchanged."; return 0;;
+      stop)    o1="$(term_proc scheduler)"; o2="$(term_proc dashboard)"
+               [ -n "$o1" ] && wait_dead "$o1" 10; [ -n "$o2" ] && wait_dead "$o2" 5; notify "Stopped the scheduler and dashboard. Positions at the broker are unchanged."; return 0;;
       restart) running="restart";;
     esac
   fi
+  sched_old=""; sched_bg=""
   if [ -n "$running" ] && { [ "$running" = "restart" ] || [ "$(cat "$RUN_DIR/version" 2>/dev/null)" != "$version" ]; }; then
-    stop_proc scheduler; stop_proc dashboard
-    for _ in $(seq 1 20); do port_open || break; sleep 0.5; done
+    # Stop both at once. The dashboard comes back immediately; the scheduler restarts in the background
+    # as soon as the old one has exited (it posts its Discord "stopped" alert first), so the browser isn't kept waiting.
+    sched_old="$(term_proc scheduler)"; dash_old="$(term_proc dashboard)"
+    [ -n "$dash_old" ] && wait_dead "$dash_old" 5
+    for _ in $(seq 1 25); do port_open || break; sleep 0.2; done
     restarted="yes"
   fi
   echo "$version" >"$RUN_DIR/version"
 
   started=""
-  if alive "$RUN_DIR/scheduler.pid"; then
+  if [ -n "$restarted" ]; then
+    ( [ -n "$sched_old" ] && wait_dead "$sched_old" 10; start_scheduler ) &
+    sched_bg=$!
+  elif alive "$RUN_DIR/scheduler.pid"; then
     echo "Scheduler already running (pid $(cat "$RUN_DIR/scheduler.pid"))."
   else
-    nohup "$PY" -m src.scheduler.run_loop >>"$LOG_DIR/scheduler.log" 2>&1 &
-    echo $! >"$RUN_DIR/scheduler.pid"
+    start_scheduler
     started="scheduler"
   fi
   if alive "$RUN_DIR/dashboard.pid" || port_open; then
@@ -113,7 +125,7 @@ main() {
   fi
 
   # --- wait for the dashboard, then open it ------------------------------------------------
-  for _ in $(seq 1 60); do port_open && break; sleep 0.5; done
+  for _ in $(seq 1 150); do port_open && break; sleep 0.2; done
   if ! port_open; then notify "Dashboard did not start. See $LOG_DIR/dashboard.log"; return 1; fi
   if command -v open >/dev/null 2>&1; then open "$URL"
   elif command -v xdg-open >/dev/null 2>&1; then xdg-open "$URL" >/dev/null 2>&1; fi
@@ -121,6 +133,8 @@ main() {
   if [ -n "$restarted" ]; then notify "Updated${pulled:+ to the latest version} and restarted. Dashboard: $URL"
   elif [ -n "$started" ]; then notify "Started $started${pulled:+ (latest version)}. Dashboard: $URL"
   else notify "Already running the latest version. Opened $URL"; fi
+  [ -n "$sched_bg" ] && wait "$sched_bg"   # the scheduler restart finishes in the background after the browser opened
+  return 0
 }
 
 main "$@"

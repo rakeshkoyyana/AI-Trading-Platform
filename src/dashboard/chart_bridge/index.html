@@ -30,17 +30,25 @@
     baseH = a.height || 760;
     if (!a.autoheight) autoH = 0;
     send("streamlit:setFrameHeight", { height: (a.autoheight && autoH) || baseH });
-    if (a.brand_link && !window.__awBrand) {
-      window.__awBrand = true;
+    if (a.brand_link) {
+      // the top-bar logo asks Python to open the About section (the page is closed until then)
       try {
-        window.parent.document.addEventListener("click", function (e) {
-          const t = e.target.closest && e.target.closest(".tp-brand");
-          if (!t) return;
-          e.preventDefault();
-          const el = window.parent.document.getElementById("about-alphawave");
-          if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
-        }, true);
+        const P = window.parent;
+        P.__awBrandSend = function () { seq += 1; send("streamlit:setComponentValue", { value: { seq: Date.now() * 1000 + seq, type: "toggle_about" }, dataType: "json" }); };
+        if (!P.__awBrandBound) {
+          P.__awBrandBound = true;
+          P.document.addEventListener("click", function (e) {
+            const t = e.target.closest && e.target.closest(".tp-brand");
+            if (!t) return;
+            e.preventDefault();
+            if (P.__awBrandSend) P.__awBrandSend();
+          }, true);
+        }
       } catch (x) {}
+    }
+    if (a.scroll_token && a.scroll_token !== window.__awScroll) {
+      window.__awScroll = a.scroll_token;
+      setTimeout(function () { try { window.frameElement.scrollIntoView({ behavior: "smooth", block: "start" }); } catch (x) {} }, 350);
     }
   });
   send("streamlit:componentReady", { apiVersion: 1 });

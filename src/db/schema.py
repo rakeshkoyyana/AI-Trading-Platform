@@ -183,6 +183,16 @@ class ModifyRequest(Base):
     note: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
 
+class RiskOverride(Base):
+    """Position-sizing limits edited on the dashboard; the scheduler reads them at every cycle (no restart needed)."""
+
+    __tablename__ = "risk_overrides"
+
+    key: Mapped[str] = mapped_column(String(32), primary_key=True)  # max_position_pct | risk_per_trade_pct
+    value: Mapped[float] = mapped_column(Float)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class CouncilVote(Base):
     """Shadow analyst-council votes for a fresh signal. Logged beside the real decision; never changes it."""
 

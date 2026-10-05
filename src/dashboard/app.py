@@ -200,6 +200,65 @@ def header_and_tape():
 
 header_and_tape()
 
+
+def _fmt_t(x) -> str:
+    return "—" if x is None or pd.isna(x) else pd.Timestamp(x, tz="UTC").tz_convert(m.TZ).strftime("%b %d %H:%M:%S CT")
+
+
+@st.dialog("Trade details", width="large")
+def _trade_dialog(trade_id: int) -> None:
+    det = m.trade_detail(engine, trade_id)
+    if det is None:
+        st.warning("That trade is no longer in the database.")
+        return
+    t, dv = det["trade"], det["derived"]
+    side = "LONG" if t["direction"] == "long" else "SHORT"
+    st.markdown(f"### {'🟢' if t['direction'] == 'long' else '🔴'} {side} {t['symbol']} × {t['qty']:g}  ·  `{t['status']}`  ·  trade #{t['id']}")
+    pnl = t["pnl"]
+    c = st.columns(4)
+    c[0].metric("P&L", f"{pnl:+,.2f}" if pnl is not None else "open", f"{dv['r_multiple']:+.2f} R" if dv["r_multiple"] is not None else None)
+    c[1].metric("Entry", f"{t['entry_price']:.2f}" if t["entry_price"] is not None else "—")
+    c[2].metric("Exit", f"{t['exit_price']:.2f}" if t["exit_price"] is not None else "—")
+    c[3].metric("Held", str(dv["held"]).split(".")[0] if dv["held"] is not None else "still open")
+    c = st.columns(4)
+    c[0].metric("Stop", f"{t['stop_loss']:.2f}" if t["stop_loss"] else "—")
+    c[1].metric("Take-profit", f"{t['take_profit']:.2f}" if t["take_profit"] else "none (Pine exits)")
+    c[2].metric("Money at risk", f"${dv['risk_dollars']:,.2f}" if dv["risk_dollars"] is not None else "—")
+    c[3].metric("Position value", f"${dv['notional']:,.0f}" if dv["notional"] is not None else "—")
+    st.caption(f"Opened {_fmt_t(t['entry_time'])}  ·  closed {_fmt_t(t['exit_time'])}  ·  mode {t['mode']}"
+               + (f"  ·  planned reward:risk {dv['target_rr']:.2f}" if dv["target_rr"] else "")
+               + (f"  ·  broker order {det['trade']['broker_order_id']}" if det["trade"].get("broker_order_id") else ""))
+    if t.get("note"):
+        st.info(t["note"])
+    pr = det["proposal"]
+    if pr:
+        st.markdown("**Why it was taken**")
+        for r in pr["reasons"]:
+            st.markdown(f"- {r}")
+        st.caption(f"Proposal {pr['status']} · created {_fmt_t(pr['created'])} · decided {_fmt_t(pr['decided'])}")
+    sg = det["signal"]
+    if sg:
+        st.markdown(f"**Signal:** {sg['type']} at {_fmt_t(sg['time'])}")
+        if sg["details"]:
+            st.json(sg["details"], expanded=False)
+    extra = []
+    if t["model_probability"] is not None:
+        extra.append(f"ML P(win) {t['model_probability']:.0%} (shadow)")
+    if t["sentiment_at_entry"] is not None:
+        extra.append(f"news sentiment {t['sentiment_at_entry']:+.2f}")
+    if det["council"]:
+        extra.append(f"council {det['council']['verdict']} ({(det['council']['score'] or 0):+.2f}, shadow)")
+    if extra:
+        st.caption("  ·  ".join(extra))
+    if det["modifies"]:
+        st.markdown("**Stop / target changes**")
+        st.dataframe(pd.DataFrame([dict(time=_fmt_t(x["time"]), stop=x["stop"], target=x["target"], result=x["status"], note=x["note"]) for x in det["modifies"]]),
+                     hide_index=True, width="stretch")
+    if det["events"]:
+        with st.expander(f"Event log around this trade ({len(det['events'])})"):
+            st.dataframe(pd.DataFrame([dict(time=_fmt_t(x["time"]), kind=x["kind"], message=x["message"]) for x in det["events"]]),
+                         hide_index=True, width="stretch")
+
 # ------------------------------------------------------------------ trade control
 _MODE_HELP = ("**Off** – never open a position (an existing one is still closed by the Pine exit rules). "
               "**Ask** – a qualifying signal waits here for your Approve / Reject. "
@@ -221,6 +280,7 @@ def trade_control():
     modes = control.get_modes(engine, syms, S)
     syms = list(dict.fromkeys([*syms, *modes]))
     pend = control.list_pending(engine, "pending")
+    _risk = control.get_risk(engine, S)
     n_active = sum(1 for v in modes.values() if v != "off")
     seen = st.session_state.setdefault("alerted_ids", set())
     fresh = alerts_ui.new_alert_ids(pend, seen)
@@ -245,18 +305,39 @@ def trade_control():
                     st.caption(f"**{s_}**" + ("" if s_ in tickers else "  ·  ☆ research"))
                     st.segmented_control(f"Mode {s_}", ["Off", "Ask", "Auto"], default=modes[s_].title(), key=f"mode_{s_}",
                                          on_change=_mode_changed, args=(s_,), label_visibility="collapsed")
+        with st.expander(f"Position size  ·  risk {_risk['risk_per_trade_pct']:.2%} per trade  ·  cap {_risk['max_position_pct']:.1%} of equity"):
+            st.caption("Shares = the smallest of: (equity × risk %) ÷ stop distance, (equity × position cap) ÷ price, and buying power. "
+                       "With tight stops the **position cap** is usually the one that binds, which is why trades come out the same size. "
+                       "Raise it to take bigger positions. New values apply from the next signal; no restart.")
+            r1, r2, r3 = st.columns([1, 1, 1])
+            cap_v = r1.number_input("Max position (% of equity)", 0.5, 25.0, round(_risk["max_position_pct"] * 100, 2), 0.5, key="sz_cap")
+            risk_v = r2.number_input("Risk per trade (% of equity)", 0.05, 2.0, round(_risk["risk_per_trade_pct"] * 100, 2), 0.05, key="sz_risk")
+            if r3.button("Save sizing", key="sz_save", type="primary"):
+                ok, why = control.set_risk(engine, cap_v / 100, risk_v / 100)
+                st.toast("Saved – applies to the next signal" if ok else why, icon="✅" if ok else "⚠️")
+                st.rerun()
+            if r3.button("Reset to .env", key="sz_reset"):
+                control.reset_risk(engine)
+                st.rerun()
         if pend:
             st.markdown(f"**Waiting for your approval ({len(pend)})**")
         for p in pend:
             left_s = max(int((p.expires_at - utc_now()).total_seconds()), 0)
             prob_s = f" · P(win) {p.probability:.0%}" if p.probability is not None else ""
             stop_s = (f"stop {p.stop_loss:.2f}" if p.stop_loss else "no stop") + (f" · target {p.take_profit:.2f}" if p.take_profit else "")
-            c1, c2, c3 = st.columns([4, 1, 1])
+            c1, cq, c2, c3 = st.columns([4, 1.3, 1, 1])
+            new_qty = cq.number_input("Shares", min_value=1, value=int(p.qty), step=1, key=f"qty_{p.id}",
+                                      help="Edit the size before approving. The suggestion is min(risk-based size, position cap, buying power).")
             c1.markdown(f"{'🟢' if p.direction == 'long' else '🔴'} **{p.direction.upper()} {p.symbol}** × {p.qty} @ ~{p.entry:.2f} · "
                         f"{stop_s}{prob_s} · expires in {left_s // 60}:{left_s % 60:02d}")
             if c2.button("Approve", key=f"ap_{p.id}", type="primary"):
-                ok = control.decide(engine, p.id, True)
-                st.toast("Approved – the scheduler will send it within ~2 s" if ok else "Too late – that request expired")
+                ok, why = True, ""
+                if int(new_qty) != int(p.qty):
+                    ok, why = control.update_pending_qty(engine, p.id, int(new_qty))
+                if ok:
+                    ok = control.decide(engine, p.id, True)
+                    why = "" if ok else "that request expired"
+                st.toast(f"Approved x{int(new_qty)} – the scheduler will send it within ~2 s" if ok else f"Not sent: {why}")
                 st.rerun()
             if c3.button("Reject", key=f"rj_{p.id}"):
                 control.decide(engine, p.id, False)
@@ -404,8 +485,24 @@ with left:
     if not rt.empty:
         rt["time"] = rt["exit_time"].fillna(rt["entry_time"])
         rt = rt.sort_values("time", ascending=False, na_position="last").head(8)
-    st.html('<div class="panel"><h4>Recent trades <span class="mut" style="text-transform:none;letter-spacing:0">open positions first appear here as “open/filled”</span></h4>'
-            f'{T.recent_trades(rt.to_dict("records") if not rt.empty else [], utc_now())}</div>')
+    st.html('<div class="panel"><h4>Recent trades <span class="mut" style="text-transform:none;letter-spacing:0">click a row for the full story of that trade</span></h4></div>')
+    if rt.empty:
+        st.caption("No trades yet.")
+    else:
+        view = pd.DataFrame({
+            "Symbol": rt["symbol"].values, "Side": rt["direction"].str.upper().values, "Shares": rt["qty"].values,
+            "Entry": rt["entry_price"].values, "Exit": rt["exit_price"].values,
+            "Result": [(f"{p_:+,.2f}" if (st_ == "closed" and pd.notna(p_)) else st_) for p_, st_ in zip(rt["pnl"], rt["status"])],
+            "When (CT)": m.to_local(rt["time"]).dt.strftime("%b %d %H:%M").values,
+        })
+        pick = st.dataframe(view, hide_index=True, width="stretch", on_select="rerun", selection_mode="single-row", key="recent_trades_tbl",
+                            column_config={"Entry": st.column_config.NumberColumn(format="%.2f"), "Exit": st.column_config.NumberColumn(format="%.2f")})
+        rows_sel = (pick.selection.rows if pick is not None and getattr(pick, "selection", None) else [])
+        if rows_sel and rows_sel != st.session_state.get("_trade_sel_seen"):
+            st.session_state["_trade_sel_seen"] = rows_sel   # open once per click; closing the popup must not bring it back
+            _trade_dialog(int(rt.iloc[rows_sel[0]]["id"]))
+        elif not rows_sel:
+            st.session_state.pop("_trade_sel_seen", None)
 
 with right:
     st.html('<div class="panel"><h4>Watchlist <span class="mut" style="text-transform:none;letter-spacing:0">dots = confluence</span></h4>'
@@ -651,7 +748,7 @@ with tab_sys:
 with tab_set:
     st.markdown("**Risk limits & mode** (set via `.env`; see `.env.example`)")
     st.dataframe(pd.DataFrame([
-        ("Trading mode", S.trading_mode), ("Max position size", f"{S.max_position_pct:.1%} of equity"), ("Risk per trade", f"{S.risk_per_trade_pct:.2%} of equity"),
+        ("Trading mode", S.trading_mode), ("Max position size", f"{control.get_risk(engine, S)['max_position_pct']:.1%} of equity (edit in Trade control)"), ("Risk per trade", f"{control.get_risk(engine, S)['risk_per_trade_pct']:.2%} of equity"),
         ("Daily loss halt", f"{S.max_daily_loss_pct:.1%}"), ("Max open positions", S.max_open_positions), ("Min model probability", S.min_model_probability),
         ("Use unvalidated model", S.use_unvalidated_model), ("Sentiment block |score| ≥", S.sentiment_block_threshold), ("Shorts allowed", S.allow_shorts),
         ("Min reward:risk", S.min_rr), ("Flatten before close", f"{S.flatten_minutes_before_close} min" if S.flatten_at_close else "off"),
@@ -673,6 +770,22 @@ with tab_set:
             st.error(f"Could not change the kill switch file: {exc}")
 
 
-# ---- About AlphaWave (the topbar brand scrolls here)
-st.html('<div id="about-alphawave" style="scroll-margin-top:12px;height:1px"></div>')
-chart_widget(about_html(), key="about", height=1500, autoheight=True, brand_link=True)
+# ---- About AlphaWave: closed until the top-bar logo is clicked
+_logo = chart_widget("", key="about_logo", height=1, brand_link=True)  # invisible; turns a logo click into an event
+if _logo and _logo.get("type") == "toggle_about" and _logo.get("seq") != st.session_state.get("_about_seq"):
+    st.session_state["_about_seq"] = _logo.get("seq")
+    st.session_state["show_about"] = True
+    st.session_state["_about_scroll"] = str(_logo.get("seq"))
+    st.rerun()
+
+if st.session_state.get("show_about"):
+    st.html('<div id="about-alphawave" style="scroll-margin-top:12px;height:1px"></div>')
+    _ac1, _ac2 = st.columns([6, 1])
+    _ac1.markdown("#### About AlphaWave")
+    if _ac2.button("✕ Close", key="about_close_top", help="Hide the About section"):
+        st.session_state["show_about"] = False
+        st.rerun()
+    chart_widget(about_html(), key="about", height=1500, autoheight=True, scroll_token=st.session_state.get("_about_scroll", ""))
+    if st.button("✕ Close About", key="about_close_bottom"):
+        st.session_state["show_about"] = False
+        st.rerun()

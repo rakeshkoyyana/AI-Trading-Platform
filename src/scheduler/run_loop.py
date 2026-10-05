@@ -298,7 +298,7 @@ class TradingCycle:
         exited = self._manage_exit(sym, ctx, now, state)
 
         sentiment = self.sentiment_fn(sym)
-        d = should_trade(sym, ctx, state, self.s, bundle, sentiment, now, self.s.timeframe)
+        d = should_trade(sym, ctx, state, control.effective_settings(self.engine, self.s), bundle, sentiment, now, self.s.timeframe)
         if d.trade and not can_open:
             d.block("session_cutoff", "no new entries this close to the end of the session")
         if d.trade and mode == "off":

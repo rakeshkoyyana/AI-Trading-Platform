@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 from sqlalchemy import select
 
-from src.db.schema import ModelPrediction, Signal, SystemEvent, Trade, session_scope
+from src.db.schema import CouncilVote, ModelPrediction, ModifyRequest, PendingOrder, Signal, SystemEvent, Trade, session_scope
 
 TZ = "America/Chicago"
 
@@ -195,3 +195,50 @@ def health(engine, bars_latest: datetime | None, now: datetime | None = None, tr
         # healthy = ran recently (when market is open) and no error burst
         status=("ok" if (errors.shape[0] < 5 and (not in_window or (heartbeat_min is not None and heartbeat_min < 40))) else "attention"),
     )
+
+
+# ------------------------------------------------------------------ one trade, everything we know about it
+def trade_detail(engine, trade_id: int) -> dict | None:
+    """Everything recorded about a trade: numbers, why it was taken, who approved it, what happened since."""
+    import json
+
+    with session_scope(engine) as sx:
+        t = sx.get(Trade, int(trade_id))
+        if t is None:
+            return None
+        tr = {c: getattr(t, c) for c in TRADE_COLS}
+        tr["broker_order_id"] = t.broker_order_id
+        sig = sx.get(Signal, t.signal_id) if t.signal_id else None
+        signal = None if sig is None else dict(type=sig.signal_type, time=sig.timestamp, details=sig.confirmation_details_json or {})
+        po = sx.execute(select(PendingOrder).where(PendingOrder.trade_id == t.id)).scalars().first()
+        proposal = None
+        if po is not None:
+            try:
+                reasons = json.loads(po.reasons_json or "[]")
+            except ValueError:
+                reasons = []
+            proposal = dict(created=po.created_at, decided=po.decided_at, status=po.status, qty=po.qty, reasons=reasons)
+        cv = sx.execute(select(CouncilVote).where(CouncilVote.trade_id == t.id)).scalars().first()
+        council = None if cv is None else dict(verdict=cv.verdict, score=cv.score, votes=cv.votes_json)
+        lo = (t.entry_time or datetime.utcnow()) - timedelta(minutes=20)
+        hi = (t.exit_time or datetime.utcnow()) + timedelta(minutes=5)
+        evs = sx.execute(select(SystemEvent).where(SystemEvent.timestamp >= lo, SystemEvent.timestamp <= hi)
+                         .order_by(SystemEvent.timestamp)).scalars().all()
+        events = [dict(time=e.timestamp, kind=e.kind, message=e.message) for e in evs
+                  if t.symbol in e.message and e.kind not in ("cycle",)][:30]
+        mods = [dict(time=r.created_at, stop=r.stop, target=r.target, status=r.status, note=r.note)
+                for r in sx.execute(select(ModifyRequest).where(ModifyRequest.symbol == t.symbol, ModifyRequest.created_at >= lo,
+                                                                ModifyRequest.created_at <= hi).order_by(ModifyRequest.id)).scalars()]
+    # derived numbers
+    e, sl, tp, q = tr["entry_price"], tr["stop_loss"], tr["take_profit"], tr["qty"] or 0
+    d = 1 if tr["direction"] == "long" else -1
+    risk_ps = abs(e - sl) if (e is not None and sl is not None) else None
+    derived = dict(
+        notional=(e * q) if e is not None else None,
+        risk_dollars=(risk_ps * q) if risk_ps is not None else None,
+        risk_per_share=risk_ps,
+        target_rr=(abs(tp - e) / risk_ps) if (tp is not None and e is not None and risk_ps) else None,
+        r_multiple=(d * (tr["exit_price"] - e) / risk_ps) if (tr["exit_price"] is not None and e is not None and risk_ps) else None,
+        held=(tr["exit_time"] - tr["entry_time"]) if (tr["exit_time"] is not None and tr["entry_time"] is not None) else None,
+    )
+    return dict(trade=tr, signal=signal, proposal=proposal, council=council, events=events, modifies=mods, derived=derived)

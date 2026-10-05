@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 
 from src.config import Settings, get_settings
-from src.db.schema import CloseRequest, ModifyRequest, PendingOrder, TickerMode, Trade, session_scope
+from src.db.schema import CloseRequest, ModifyRequest, PendingOrder, RiskOverride, TickerMode, Trade, session_scope
 from src.decision_engine.engine import Decision
 
 MODES = ("off", "ask", "auto")
@@ -316,3 +316,72 @@ def chart_levels(engine, symbol: str, now: datetime | None = None) -> dict:
                     t0=int(t.entry_time.replace(tzinfo=timezone.utc).timestamp()) if t.entry_time else None,
                     updating=symbol in waiting) for t in rows if t.entry_price]
     return dict(pending=pend, positions=pos)
+
+
+# ------------------------------------------------------------ position sizing (editable on the dashboard)
+RISK_KEYS = ("max_position_pct", "risk_per_trade_pct")
+RISK_LIMITS = {"max_position_pct": (0.005, 0.25), "risk_per_trade_pct": (0.0005, 0.02)}  # 0.5%-25% and 0.05%-2%
+
+
+def get_risk(engine, settings: Settings | None = None) -> dict[str, float]:
+    """Current sizing limits: the dashboard's saved values, else the .env defaults."""
+    s = settings or get_settings()
+    out = {k: float(getattr(s, k)) for k in RISK_KEYS}
+    with session_scope(engine) as sx:
+        for row in sx.execute(select(RiskOverride)).scalars():
+            if row.key in out:
+                out[row.key] = float(row.value)
+    return out
+
+
+def set_risk(engine, max_position_pct: float, risk_per_trade_pct: float, now: datetime | None = None) -> tuple[bool, str]:
+    """Save new sizing limits (fractions of equity, e.g. 0.05 = 5%). Applies to signals from the next cycle on."""
+    vals = {"max_position_pct": float(max_position_pct), "risk_per_trade_pct": float(risk_per_trade_pct)}
+    for k, v in vals.items():
+        lo, hi = RISK_LIMITS[k]
+        if not lo <= v <= hi:
+            return False, f"{k.replace('_', ' ')} must be between {lo:.2%} and {hi:.0%}"
+    with session_scope(engine) as sx:
+        for k, v in vals.items():
+            row = sx.get(RiskOverride, k)
+            if row is None:
+                sx.add(RiskOverride(key=k, value=v, updated_at=now or _utcnow()))
+            else:
+                row.value, row.updated_at = v, now or _utcnow()
+    return True, ""
+
+
+def reset_risk(engine) -> None:
+    with session_scope(engine) as sx:
+        for row in sx.execute(select(RiskOverride)).scalars():
+            sx.delete(row)
+
+
+def effective_settings(engine, settings: Settings | None = None) -> Settings:
+    """Settings with the dashboard's sizing limits applied (what the decision engine should use)."""
+    import dataclasses
+
+    s = settings or get_settings()
+    try:
+        return dataclasses.replace(s, **get_risk(engine, s))
+    except Exception:  # noqa: BLE001  (an old database without the table must never stop trading)
+        return s
+
+
+MAX_QTY_FACTOR = 3  # one edit may raise a proposal's share count by at most this multiple; the broker still enforces buying power
+
+
+def update_pending_qty(engine, pending_id: int, qty: int, now: datetime | None = None) -> tuple[bool, str]:
+    """Change how many shares a still-pending proposal will buy / sell when approved."""
+    now = now or _utcnow()
+    with session_scope(engine) as sx:
+        row = sx.get(PendingOrder, pending_id)
+        if row is None or row.status != "pending" or row.expires_at <= now:
+            return False, "that request is no longer waiting for approval"
+        qty = int(qty)
+        if qty < 1:
+            return False, "at least 1 share"
+        if qty > row.qty * MAX_QTY_FACTOR:
+            return False, f"at most {row.qty * MAX_QTY_FACTOR} shares in one edit ({MAX_QTY_FACTOR}x the current {row.qty})"
+        row.qty = qty
+        return True, ""

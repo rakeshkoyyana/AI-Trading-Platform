@@ -116,8 +116,10 @@ The scheduler needs a machine (or small VM) that stays awake and online all sess
 - **Right rail:** watchlist (price, change, sparkline, sentiment, confluence dots, fresh-signal badge), live news with sentiment chips + “Fetch latest”, and the decision feed (why each signal was taken or blocked).
 - **Tabs:** Scanner (confluence screen), Trades, Performance, Decision log, ML model card (shows when the model is *not* validated), System health, Settings (risk limits, kill switch).
 
-### About AlphaWave
-Click the AlphaWave logo in the top bar to jump to the About section at the bottom of the dashboard: the story, the idea, an animated architecture map, one trade's life with a sizing calculator, the guardrails and the road ahead. It is a static page (`src/dashboard/static/about.html`), so edit the wording there. The lab uses invented prices and the progress bar assumes a 28-day paper run from Oct 2.
+### Position size, trade details, About
+- **Position size** (Trade control → "Position size"): edit the max position (% of equity) and risk per trade (%). Shares = the smallest of risk-based size, the position cap and buying power; with tight stops the cap binds, so raise it for bigger positions. Saved values apply from the next signal without a restart (the scheduler reads them every cycle); "Reset to .env" goes back to the defaults. Each approval card also has a **Shares** box so you can change one trade's size before approving (one edit may raise it up to 3x).
+- **Trade details**: click a row in Recent trades for a popup with P&L and R, stop/target, money at risk, why it was taken, signal details, stop/target changes and the event log.
+- **About AlphaWave** is hidden until you click the AlphaWave logo in the top bar, and has a Close button. It shows the About section at the bottom of the dashboard: the story, the idea, an animated architecture map, one trade's life with a sizing calculator, the guardrails and the road ahead. It is a static page (`src/dashboard/static/about.html`), so edit the wording there. The lab uses invented prices and the progress bar assumes a 28-day paper run from Oct 2.
 
 ## 5. Safety
 - **Kill switch:** `touch KILL_SWITCH` blocks all new orders immediately; `rm KILL_SWITCH` re-enables.

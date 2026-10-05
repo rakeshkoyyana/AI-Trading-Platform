@@ -100,44 +100,55 @@ class AlpacaBroker(Broker):
 
     _LIVE = {"new", "accepted", "held", "pending_new", "partially_filled", "pending_replace", "accepted_for_bidding"}
 
-    def protected_symbols(self) -> set[str] | None:
-        try:
-            from alpaca.trading.enums import QueryOrderStatus
-            from alpaca.trading.requests import GetOrdersRequest
+    def _open_orders(self, symbols=None) -> list[OrderResult]:
+        """Every live order, bracket legs included, as one flat de-duplicated list.
 
-            out: set[str] = set()
-            for o in self.client.get_orders(GetOrdersRequest(status=QueryOrderStatus.OPEN, nested=True, limit=500)):
+        Alpaca rolls bracket legs up under their (already filled) parent when nested=True, and the parent is not
+        'open' any more, so a nested-only query can miss a live stop. The flat query lists each live leg as its own
+        order, so ask both ways and merge."""
+        from alpaca.trading.enums import QueryOrderStatus
+        from alpaca.trading.requests import GetOrdersRequest
+
+        seen: dict[str, OrderResult] = {}
+        for nested in (False, True):
+            kw = dict(status=QueryOrderStatus.OPEN, nested=nested, limit=500)
+            if symbols:
+                kw["symbols"] = list(symbols)
+            for o in self.client.get_orders(GetOrdersRequest(**kw)):
                 for x in [o, *(getattr(o, "legs", None) or [])]:
                     r = _result(x)
-                    if r.order_type in {"stop", "stop_limit", "trailing_stop"} and r.status in self._LIVE:
-                        out.add(r.symbol)
-            return out
+                    seen.setdefault(r.id, r)
+        return list(seen.values())
+
+    def protected_symbols(self) -> set[str] | None:
+        try:
+            return {r.symbol for r in self._open_orders()
+                    if r.order_type in {"stop", "stop_limit", "trailing_stop"} and r.status in self._LIVE}
         except Exception:  # noqa: BLE001
             return None
 
     def modify_exit_levels(self, symbol, stop, target):
         try:
-            from alpaca.trading.enums import QueryOrderStatus
-            from alpaca.trading.requests import GetOrdersRequest, ReplaceOrderRequest
+            from alpaca.trading.requests import ReplaceOrderRequest
 
             pos = next((p for p in self.get_positions() if p.symbol == symbol and p.qty), None)
             if pos is None:
                 return False, "no open position at the broker"
             exit_side = "sell" if pos.qty > 0 else "buy"
             stop_leg = tp_leg = None
-            for o in self.client.get_orders(GetOrdersRequest(status=QueryOrderStatus.OPEN, symbols=[symbol], nested=True, limit=100)):
-                for x in [o, *(getattr(o, "legs", None) or [])]:
-                    r = _result(x)
-                    if r.symbol != symbol or r.side != exit_side or r.status not in self._LIVE:
-                        continue
-                    if r.order_type in {"stop", "stop_limit"} and stop_leg is None:
-                        stop_leg = r
-                    elif r.order_type == "limit" and tp_leg is None:
-                        tp_leg = r
+            orders = self._open_orders([symbol])
+            for r in orders:
+                if r.symbol != symbol or r.side != exit_side or r.status not in self._LIVE:
+                    continue
+                if r.order_type in {"stop", "stop_limit"} and stop_leg is None:
+                    stop_leg = r
+                elif r.order_type == "limit" and tp_leg is None:
+                    tp_leg = r
             msgs = []
             if stop is not None:
                 if stop_leg is None:
-                    return False, "no resting stop order found at the broker"
+                    seen = ", ".join(f"{r.side} {r.order_type} {r.status}" for r in orders if r.symbol == symbol) or "none"
+                    return False, f"no resting stop order found at the broker (orders seen for {symbol}: {seen})"
                 self.client.replace_order_by_id(stop_leg.id, ReplaceOrderRequest(stop_price=round(float(stop), 2)))
                 msgs.append(f"stop -> {float(stop):.2f}")
             if target is not None:

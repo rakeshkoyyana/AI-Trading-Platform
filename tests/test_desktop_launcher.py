@@ -142,3 +142,26 @@ def test_installer_builds_both_apps(fake_repo, tmp_path):
         assert os.access(run, os.X_OK) and script in run.read_text()
         assert (dest / f"{app}.app/Contents/Resources/repo_path").read_text() == str(fake_repo)
         assert (dest / f"{app}.app/Contents/Info.plist").exists()
+
+
+def test_only_new_requirement_lines_are_installed_and_timing_is_logged(fake_repo):
+    port = _free_port()
+    (fake_repo / "requirements.txt").write_text("alpha\nbeta>=1.0\n")
+    # fake python that records pip install arguments
+    py = fake_repo / "venv/bin/python"
+    py.write_text(
+        "#!/bin/bash\n"
+        'if [ "$1" = "-c" ]; then exit 0; fi\n'
+        f'if [ "$1" = "-m" ] && [ "$2" = "pip" ]; then echo "$@" >> {fake_repo}/pip_calls.txt; exit 0; fi\n'
+        'if [ "$2" = "src.scheduler.run_loop" ]; then exec sleep 300; fi\n'
+        'while [ $# -gt 0 ]; do [ "$1" = "--server.port" ] && P=$2; shift; done\n'
+        "exec python3 -m http.server $P --bind 127.0.0.1\n"
+    )
+    assert _run(fake_repo, "alphawave_launcher.sh", port).returncode == 0
+    assert not (fake_repo / "pip_calls.txt").exists()  # first run: baseline only, nothing installed
+    (fake_repo / "requirements.txt").write_text("alpha\nbeta>=1.0\ngamma>=2\n")
+    assert _run(fake_repo, "alphawave_launcher.sh", port).returncode == 0
+    calls = (fake_repo / "pip_calls.txt").read_text()
+    assert "gamma>=2" in calls and "alpha" not in calls and "beta" not in calls
+    timing = (fake_repo / "logs/launcher-timing.log").read_text()
+    assert "launcher start" in timing and "dashboard answering" in timing

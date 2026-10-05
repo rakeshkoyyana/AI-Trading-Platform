@@ -18,6 +18,9 @@ main() {
   export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$PATH"
   cd "$REPO" || { echo "Repo not found: $REPO" >&2; return 1; }
   mkdir -p "$RUN_DIR" "$LOG_DIR"
+  SECONDS=0
+  mark() { echo "$(date '+%F %T') +${SECONDS}s $1" >>"$LOG_DIR/launcher-timing.log"; }  # where did the time go?
+  mark "launcher start"
 
   notify() {
     # When run by the AlphaWave app (ALPHAWAVE_APPLET=1) the app itself shows the banner so it carries the logo.
@@ -58,15 +61,23 @@ main() {
     fi
   fi
 
+  mark "pull done${pulled:+ (new code)}"
   # --- python environment ------------------------------------------------------------
   PY=""
   for p in "$REPO/venv/bin/python" "$REPO/.venv/bin/python"; do [ -x "$p" ] && { PY="$p"; break; }; done
   [ -z "$PY" ] && PY="$(command -v python3)"
-  # Install new dependencies only when requirements.txt changed.
+  # Install only requirement lines that are new or changed since the last run (a full `pip install -r` re-resolves
+  # torch/transformers/etc. and can take a minute). First run after this feature: assume already installed.
   if [ -f requirements.txt ] && [ -n "$PY" ]; then
-    rh="$(cksum < requirements.txt)"
-    if [ "$rh" != "$(cat "$RUN_DIR/requirements.cksum" 2>/dev/null)" ] && "$PY" -m pip --version >/dev/null 2>&1; then
-      "$PY" -m pip install -q -r requirements.txt >>"$LOG_DIR/update.log" 2>&1 && echo "$rh" >"$RUN_DIR/requirements.cksum"
+    if [ -f "$RUN_DIR/requirements.prev" ]; then
+      newreq="$(grep -vxFf "$RUN_DIR/requirements.prev" requirements.txt | grep -v '^[[:space:]]*\(#\|$\)')"
+      if [ -n "$newreq" ]; then
+        reqs=(); while IFS= read -r line; do reqs+=("$line"); done <<<"$newreq"   # bash 3.2-safe (macOS)
+        "$PY" -m pip install -q --disable-pip-version-check "${reqs[@]}" >>"$LOG_DIR/update.log" 2>&1 \
+          && cp requirements.txt "$RUN_DIR/requirements.prev"
+      fi
+    else
+      cp requirements.txt "$RUN_DIR/requirements.prev"
     fi
   fi
   if [ -z "$PY" ] || ! "$PY" -c "import importlib.util as u,sys; sys.exit(0 if all(u.find_spec(m) for m in ('streamlit','apscheduler')) else 1)" 2>/dev/null; then
@@ -74,6 +85,7 @@ main() {
     return 1
   fi
 
+  mark "environment ready"
   if [ "${ALPHAWAVE_CHECK:-0}" = "1" ]; then echo "Environment OK ($PY)"; return 0; fi
 
   # --- restart if the running code is older than the checked-out code -------------------
@@ -102,8 +114,9 @@ main() {
     # Stop both at once. The dashboard comes back immediately; the scheduler restarts in the background
     # as soon as the old one has exited (it posts its Discord "stopped" alert first), so the browser isn't kept waiting.
     sched_old="$(term_proc scheduler)"; dash_old="$(term_proc dashboard)"
-    [ -n "$dash_old" ] && wait_dead "$dash_old" 5
-    for _ in $(seq 1 25); do port_open || break; sleep 0.2; done
+    [ -n "$dash_old" ] && wait_dead "$dash_old" 2   # the dashboard keeps no state: short grace
+    for _ in $(seq 1 15); do port_open || break; sleep 0.2; done
+    mark "old dashboard stopped"
     restarted="yes"
   fi
   echo "$version" >"$RUN_DIR/version"
@@ -130,6 +143,7 @@ main() {
 
   # --- wait for the dashboard, then open it ------------------------------------------------
   for _ in $(seq 1 150); do port_open && break; sleep 0.2; done
+  mark "dashboard answering"
   if ! port_open; then notify "Dashboard did not start. See $LOG_DIR/dashboard.log"; return 1; fi
   if command -v open >/dev/null 2>&1; then open "$URL"
   elif command -v xdg-open >/dev/null 2>&1; then xdg-open "$URL" >/dev/null 2>&1; fi
@@ -137,7 +151,7 @@ main() {
   if [ -n "$restarted" ]; then notify "Updated${pulled:+ to the latest version} and restarted. Dashboard: $URL"
   elif [ -n "$started" ]; then notify "Started $started${pulled:+ (latest version)}. Dashboard: $URL"
   else notify "Already running the latest version. Opened $URL"; fi
-  [ -n "$sched_bg" ] && wait "$sched_bg"   # the scheduler restart finishes in the background after the browser opened
+  [ -n "$sched_bg" ] && wait "$sched_bg"; mark "scheduler restarted / launcher done"   # the scheduler restart finishes in the background after the browser opened
   return 0
 }
 

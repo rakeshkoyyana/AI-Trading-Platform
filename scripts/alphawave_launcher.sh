@@ -68,6 +68,8 @@ main() {
     return 1
   fi
 
+  if [ "${ALPHAWAVE_CHECK:-0}" = "1" ]; then echo "Environment OK ($PY)"; return 0; fi
+
   # --- restart if the running code is older than the checked-out code -------------------
   version="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
   restarted=""

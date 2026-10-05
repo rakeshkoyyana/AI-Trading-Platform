@@ -64,10 +64,31 @@ PL
   echo "Created: $app"
 }
 
+make_applet() {  # a real AppleScript applet: launches reliably from Finder (macOS only)
+  local app="$DEST/AlphaWave.app" src; src="$(mktemp -d)/AlphaWave.applescript"
+  rm -rf "$app"
+  cat > "$src" <<AS
+on run
+	do shell script "mkdir -p ~/Library/Logs; ALPHAWAVE_REPO=" & quoted form of "$REPO" & " /bin/bash " & quoted form of "$REPO/scripts/alphawave_launcher.sh" & " >> ~/Library/Logs/AlphaWave-app.log 2>&1 &"
+end run
+AS
+  osacompile -o "$app" "$src" || return 1
+  if make_icns "$app/Contents/Resources/applet.icns"; then
+    command -v codesign >/dev/null 2>&1 && codesign --force --deep -s - "$app" >/dev/null 2>&1 || true
+  fi
+  touch "$app"
+  echo "Created: $app"
+}
+
 mkdir -p "$DEST"
 chmod +x "$REPO/scripts/alphawave_launcher.sh" "$REPO/scripts/alphawave_stop.sh"
 rm -rf "$DEST/Stop AlphaWave.app"   # from an earlier version
-make_app "AlphaWave" "com.alphawave.launcher" alphawave_launcher.sh
+if command -v osacompile >/dev/null 2>&1 && make_applet; then :; else
+  make_app "AlphaWave" "com.alphawave.launcher" alphawave_launcher.sh
+fi
+echo
+echo "Checking your setup..."
+ALPHAWAVE_CHECK=1 ALPHAWAVE_NO_PULL=1 bash "$REPO/scripts/alphawave_launcher.sh" || echo "Fix the problem above, then double-click AlphaWave."
 echo
 echo "Done. Double-click AlphaWave on your Desktop. It also picks up new merges each time."
 echo "First launch: if macOS asks, right-click the app > Open once."

@@ -7,19 +7,20 @@ set -eu
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEST="${1:-$HOME/Desktop}"
-ICON_SRC="$REPO/assets/brand/alphawave-mark-512.png"
+ICON_SRC="$REPO/assets/brand/alphawave-app-icon-1024.png"
 
 make_icns() {  # make_icns <out.icns>  (needs macOS sips + iconutil; skipped otherwise)
   command -v sips >/dev/null 2>&1 && command -v iconutil >/dev/null 2>&1 && [ -f "$ICON_SRC" ] || return 1
   local set; set="$(mktemp -d)/AlphaWave.iconset"; mkdir -p "$set"
-  for s in 16 32 64 128 256 512; do
+  for s in 16 32 64 128 256 512 1024; do
     sips -z $s $s "$ICON_SRC" --out "$set/icon_${s}x${s}.png" >/dev/null
   done
   cp "$set/icon_32x32.png"   "$set/icon_16x16@2x.png"
   cp "$set/icon_64x64.png"   "$set/icon_32x32@2x.png"
   cp "$set/icon_256x256.png" "$set/icon_128x128@2x.png"
   cp "$set/icon_512x512.png" "$set/icon_256x256@2x.png"
-  rm -f "$set/icon_64x64.png"
+  cp "$set/icon_1024x1024.png" "$set/icon_512x512@2x.png"
+  rm -f "$set/icon_64x64.png" "$set/icon_1024x1024.png"
   iconutil -c icns "$set" -o "$1"
 }
 
@@ -73,8 +74,17 @@ on run
 end run
 AS
   osacompile -o "$app" "$src" || return 1
-  if make_icns "$app/Contents/Resources/applet.icns"; then
+  if make_icns "$app/Contents/Resources/AlphaWave.icns"; then
+    # osacompile adds its own icon assets that override ours on newer macOS; remove them.
+    rm -f "$app/Contents/Resources/applet.icns" "$app/Contents/Resources/Assets.car"
+    local plist="$app/Contents/Info.plist" pb=/usr/libexec/PlistBuddy
+    "$pb" -c "Delete :CFBundleIconName" "$plist" >/dev/null 2>&1 || true
+    "$pb" -c "Set :CFBundleIconFile AlphaWave" "$plist" >/dev/null 2>&1 || "$pb" -c "Add :CFBundleIconFile string AlphaWave" "$plist"
     command -v codesign >/dev/null 2>&1 && codesign --force --deep -s - "$app" >/dev/null 2>&1 || true
+    touch "$app"
+    killall Finder Dock >/dev/null 2>&1 || true   # refresh the icon cache (Finder windows reopen)
+  else
+    echo "Warning: could not build the logo icon (sips/iconutil failed); the app will use the default icon." >&2
   fi
   touch "$app"
   echo "Created: $app"

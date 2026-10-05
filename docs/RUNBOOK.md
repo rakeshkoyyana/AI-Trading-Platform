@@ -138,3 +138,21 @@ Treat results as noise until >= 30–50 closed trades.
 Push to GitHub, create an app pointing at `src/dashboard/app.py`, add secrets as env vars. The dashboard is
 read-only, but SQLite lives on the machine running the scheduler — for a cloud dashboard point `DATABASE_URL`
 at a hosted DB (e.g. Supabase Postgres) on both sides, or just run the dashboard locally.
+
+## Desktop app (macOS, no terminal)
+
+Run once: `bash scripts/install_desktop_app.sh` — puts one **AlphaWave** icon (with the logo) on your Desktop.
+
+Double-click it any time. It:
+1. Pulls the latest `main` (only if you're on a clean `main`; otherwise it skips the update).
+2. Starts the scheduler and dashboard if they aren't running.
+3. **Restarts both if new code arrived** (so merged features show up). If nothing changed and it's already running, a dialog asks **Open dashboard / Restart / Stop**.
+4. Opens http://localhost:8501.
+
+So after a merge: just double-click AlphaWave again. Logs: `logs/scheduler.log`, `logs/dashboard.log`, `logs/update.log`.
+
+- It does not run `caffeinate`; keep your Mac awake yourself.
+- Starting/restarting only affects the local processes. It never closes positions or orders at the broker.
+- To stop: double-click AlphaWave and choose **Stop** (closing the browser tab does not stop anything). Terminal alternative: `bash scripts/alphawave_stop.sh`.
+- First launch: if macOS blocks it, right-click the app > Open once. Needs a working `venv` (or `.venv`).
+- Re-run the installer only if you move the repo. It also removes the old "Stop AlphaWave" icon if you installed an earlier version.

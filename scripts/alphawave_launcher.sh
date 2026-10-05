@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One-click AlphaWave: update to the latest main, (re)start the scheduler + dashboard if needed, open the dashboard.
 #   - nothing running            -> start both
-#   - running, code unchanged    -> just open the dashboard
+#   - running, code unchanged    -> asks: Open dashboard / Restart / Stop
 #   - running, new code pulled   -> restart both so new features show up
 # Stopping or restarting only affects the local processes; it never touches positions or orders at the broker.
 # Keep the Mac awake yourself (e.g. `caffeinate -dims`); this script does not.
@@ -71,8 +71,21 @@ main() {
   # --- restart if the running code is older than the checked-out code -------------------
   version="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
   restarted=""
-  if { alive "$RUN_DIR/scheduler.pid" || alive "$RUN_DIR/dashboard.pid"; } &&
-     [ "$(cat "$RUN_DIR/version" 2>/dev/null)" != "$version" ]; then
+  running=""; { alive "$RUN_DIR/scheduler.pid" || alive "$RUN_DIR/dashboard.pid"; } && running="yes"
+  if [ -n "$running" ] && [ "$(cat "$RUN_DIR/version" 2>/dev/null)" = "$version" ]; then
+    # Already running the latest code: ask what to do (ALPHAWAVE_ACTION=open|restart|stop skips the dialog).
+    action="${ALPHAWAVE_ACTION:-}"
+    if [ -z "$action" ] && command -v osascript >/dev/null 2>&1; then
+      choice="$(osascript -e 'button returned of (display dialog "AlphaWave is running." & return & "Stopping only ends the local scheduler and dashboard; your positions and orders at the broker are not touched." buttons {"Stop", "Restart", "Open dashboard"} default button "Open dashboard" with title "AlphaWave")' 2>/dev/null)" \
+        || return 0   # dialog cancelled: do nothing
+      case "$choice" in Stop) action=stop;; Restart) action=restart;; *) action=open;; esac
+    fi
+    case "${action:-open}" in
+      stop)    stop_proc scheduler; stop_proc dashboard; notify "Stopped the scheduler and dashboard. Positions at the broker are unchanged."; return 0;;
+      restart) running="restart";;
+    esac
+  fi
+  if [ -n "$running" ] && { [ "$running" = "restart" ] || [ "$(cat "$RUN_DIR/version" 2>/dev/null)" != "$version" ]; }; then
     stop_proc scheduler; stop_proc dashboard
     for _ in $(seq 1 20); do port_open || break; sleep 0.5; done
     restarted="yes"

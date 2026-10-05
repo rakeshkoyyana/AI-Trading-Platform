@@ -146,13 +146,13 @@ Run once: `bash scripts/install_desktop_app.sh` — puts one **AlphaWave** icon 
 Double-click it any time. It:
 1. Pulls the latest `main` (only if you're on a clean `main`; otherwise it skips the update).
 2. Starts the scheduler and dashboard if they aren't running.
-3. **Restarts both if new code arrived** (so merged features show up), or just opens the dashboard if nothing changed.
+3. **Restarts both if new code arrived** (so merged features show up). If nothing changed and it's already running, a dialog asks **Open dashboard / Restart / Stop**.
 4. Opens http://localhost:8501.
 
 So after a merge: just double-click AlphaWave again. Logs: `logs/scheduler.log`, `logs/dashboard.log`, `logs/update.log`.
 
 - It does not run `caffeinate`; keep your Mac awake yourself.
 - Starting/restarting only affects the local processes. It never closes positions or orders at the broker.
-- To stop the local processes (optional): `bash scripts/alphawave_stop.sh`.
+- To stop: double-click AlphaWave and choose **Stop** (closing the browser tab does not stop anything). Terminal alternative: `bash scripts/alphawave_stop.sh`.
 - First launch: if macOS blocks it, right-click the app > Open once. Needs a working `venv` (or `.venv`).
 - Re-run the installer only if you move the repo. It also removes the old "Stop AlphaWave" icon if you installed an earlier version.

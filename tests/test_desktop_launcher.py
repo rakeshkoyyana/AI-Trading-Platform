@@ -91,6 +91,29 @@ def test_new_code_restarts_both_processes(fake_repo):
             os.kill(int(pid), 0)
 
 
+def test_running_app_actions_open_restart_stop(fake_repo):
+    port = _free_port()
+    assert _run(fake_repo, "alphawave_launcher.sh", port).returncode == 0
+    pidf = lambda n: (fake_repo / "data/run" / f"{n}.pid").read_text()
+    first = {n: pidf(n) for n in ("scheduler", "dashboard")}
+
+    def act(a):
+        env = {**os.environ, "ALPHAWAVE_REPO": str(fake_repo), "ALPHAWAVE_PORT": str(port), "ALPHAWAVE_NO_PULL": "1", "ALPHAWAVE_ACTION": a}
+        return subprocess.run(["bash", str(fake_repo / "scripts/alphawave_launcher.sh")], env=env, capture_output=True, text=True, timeout=60)
+
+    assert act("open").returncode == 0 and {n: pidf(n) for n in first} == first
+    r = act("restart")
+    assert r.returncode == 0 and "restarted" in r.stdout.lower() and pidf("scheduler") != first["scheduler"]
+    last = {n: pidf(n) for n in first}
+    r = act("stop")
+    assert r.returncode == 0 and "Stopped" in r.stdout
+    assert not (fake_repo / "data/run/scheduler.pid").exists()
+    time.sleep(0.5)
+    for pid in last.values():
+        with pytest.raises(ProcessLookupError):
+            os.kill(int(pid), 0)
+
+
 def test_launcher_reports_missing_python_env(fake_repo):
     (fake_repo / "venv/bin/python").write_text("#!/bin/bash\nexit 1\n")
     r = _run(fake_repo, "alphawave_launcher.sh", _free_port())

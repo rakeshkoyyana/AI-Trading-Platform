@@ -16,3 +16,4 @@ pandas_market_calendars
 pytest
 joblib
 tzdata
+discord.py>=2.4

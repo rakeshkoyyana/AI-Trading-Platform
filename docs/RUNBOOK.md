@@ -160,3 +160,22 @@ So after a merge: just double-click AlphaWave again. Logs: `logs/scheduler.log`,
 - Re-run the installer only if you move the repo. It also removes the old "Stop AlphaWave" icon if you installed an earlier version.
 
 **Discord stop alert:** the scheduler posts "Scheduler stopped (SIGTERM / Ctrl+C)" when it is stopped (including via the AlphaWave Stop choice) and "Scheduler crashed: ..." on an unexpected error. A hard kill, power loss or Mac sleep cannot send an alert.
+
+## Approve from Discord (optional, free)
+
+When a trade is waiting for approval and you're away from the dashboard, Discord shows the proposal with **Approve** and **Reject** buttons. A click does exactly what the dashboard buttons do (the scheduler re-checks everything and sends the order). The dashboard still works too, and whichever you use first wins.
+
+One-time setup (about 5 minutes):
+1. discord.com/developers/applications > **New Application** (name it AlphaWave) > **Bot** > **Reset Token** > copy it.
+2. **OAuth2 > URL Generator**: tick scope `bot`, permissions *View Channels* and *Send Messages*. Open the URL and add the bot to your server. No privileged intents are needed.
+3. In Discord: Settings > Advanced > **Developer Mode** on. Right-click your alerts channel > **Copy Channel ID**. Right-click your own name > **Copy User ID**.
+4. Add to `.env`:
+   ```
+   DISCORD_BOT_TOKEN=...
+   DISCORD_CHANNEL_ID=...
+   DISCORD_APPROVER_IDS=your_user_id        # comma-separate to allow more people
+   ```
+5. Double-click AlphaWave to restart. The scheduler log (`logs/scheduler.log`) shows "Discord approval buttons enabled".
+
+Safety: only the user IDs in `DISCORD_APPROVER_IDS` can click (anyone else gets a private "not allowed"); with no IDs set the feature stays off. Keep the token secret like your Alpaca keys. If the bot can't post, the normal webhook message is sent instead. Limits: Discord can't edit share size or stop/target, so use the dashboard for that.
+

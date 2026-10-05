@@ -328,7 +328,7 @@ def trade_control():
                     st.caption(f"**{s_}**")
                     st.segmented_control(f"Mode {s_}", ["Off", "Ask", "Auto"], default=modes[s_].title(), key=f"mode_{s_}",
                                          on_change=_mode_changed, args=(s_,), label_visibility="collapsed")
-                    if st.button("✕ Remove", key=f"rmt_{s_}", help=f"Take {s_} off the trade list (refused while a position is open)"):
+                    if st.button("✕", key=f"rmt_{s_}", help=f"Remove {s_} from the trade list (refused while a position is open)"):
                         ok, why = control.remove_trade_ticker(engine, s_, S)
                         st.toast(f"{s_} removed" if ok else why, icon="✅" if ok else "⚠️")
                         if ok:
@@ -842,10 +842,10 @@ if st.session_state.get("show_about"):
     st.html('<div id="about-alphawave" style="scroll-margin-top:12px;height:1px"></div>')
     _ac1, _ac2 = st.columns([6, 1])
     _ac1.markdown("#### About AlphaWave")
-    if _ac2.button("✕ Close", key="about_close_top", help="Hide the About section"):
+    if _ac2.button("✕", key="about_close_top", help="Close"):
         st.session_state["show_about"] = False
         st.rerun()
     chart_widget(about_html(), key="about", height=1500, autoheight=True, scroll_token=st.session_state.get("_about_scroll", ""))
-    if st.button("✕ Close About", key="about_close_bottom"):
+    if st.button("✕", key="about_close_bottom", help="Close"):
         st.session_state["show_about"] = False
         st.rerun()

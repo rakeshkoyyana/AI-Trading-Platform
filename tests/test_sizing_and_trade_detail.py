@@ -79,3 +79,19 @@ def test_trade_detail_collects_numbers_reasons_and_events(engine):
     assert d["proposal"]["reasons"] == ["three confirmations agree"]
     assert [e["message"] for e in d["events"]] == ["SHORT SPY x10"]       # only this ticker's events
     assert m.trade_detail(engine, 9999) is None
+
+
+def test_stop_of_a_winning_long_can_move_above_its_entry_price(engine):
+    """Break-even / trailing stop: judged against the current price, not the entry price."""
+    from src.data_ingestion.backfill import save_bars
+    from src.data_ingestion.synthetic import make_bars
+    bars = make_bars(n_days=3, seed=1)
+    save_bars(engine, "AAA", "15Min", bars)
+    px = float(bars["close"].iat[-1])
+    with session_scope(engine) as sx:
+        sx.add(Trade(symbol="AAA", direction="long", entry_time=datetime.utcnow(), entry_price=px * 0.95, qty=10,
+                     stop_loss=px * 0.93, take_profit=px * 1.10, status="filled"))
+    rid, why = control.request_modify(engine, "AAA", round(px * 0.99, 2), round(px * 1.08, 2), settings=Settings(max_stop_pct=0.05))
+    assert rid, why                                                   # stop 1% under the price is ABOVE the 5%-lower entry
+    rid, why = control.request_modify(engine, "AAA", round(px * 1.01, 2), None, settings=Settings(max_stop_pct=0.05))
+    assert rid is None and "below" in why                             # a stop above the current price is still refused

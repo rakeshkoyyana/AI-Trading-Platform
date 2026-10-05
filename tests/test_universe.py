@@ -117,11 +117,16 @@ def test_search_open_and_watchlist_flow_in_the_app(tmp_path, monkeypatch):
     try:
         at = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "src" / "dashboard" / "app.py"), default_timeout=180).run()
         assert not at.exception, [e.value for e in at.exception]
-        assert loads == ["SPY"]  # only the symbol on screen, and only because the fresh DB had no bars for it
+        assert loads == [] and not at.session_state["sym"]  # nothing opens, nothing loads, until you pick a ticker
         at.selectbox(key="search").select("PLTR").run()
         assert not at.exception, [e.value for e in at.exception]
-        assert loads == ["SPY", "PLTR"] and at.session_state["sym"] == "PLTR"
+        assert loads == ["PLTR"] and at.session_state["sym"] == "PLTR"
+        from src.execution import control
+        from src.db.schema import get_engine
+        assert "PLTR" not in control.trade_tickers(get_engine(db))  # searching never adds it to Trade control
         at.button(key="wl_add").click().run()
         assert json.loads((tmp_path / "wl.json").read_text()) == ["PLTR"]
+        at.button(key="tl_add").click().run()
+        assert "PLTR" in control.trade_tickers(get_engine(db)) and control.get_modes(get_engine(db))["PLTR"] == "off"
     finally:
         cfg.get_settings.cache_clear()

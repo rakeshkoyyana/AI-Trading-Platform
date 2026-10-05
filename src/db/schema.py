@@ -129,6 +129,15 @@ class TickerMode(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class TradeTicker(Base):
+    """The tickers YOU chose to trade (Trade control). Seeded once from TICKERS in .env, then edited on the dashboard."""
+
+    __tablename__ = "trade_tickers"
+
+    symbol: Mapped[str] = mapped_column(String(16), primary_key=True)
+    added_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class PendingOrder(Base):
     """A trade the engine wants to make on an 'ask' ticker, waiting for the user's Approve / Reject."""
 

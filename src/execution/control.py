@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 
 from src.config import Settings, get_settings
-from src.db.schema import Bar, CloseRequest, ModifyRequest, PendingOrder, RiskOverride, TickerMode, Trade, session_scope
+from src.db.schema import Bar, CloseRequest, ModifyRequest, PendingOrder, RiskOverride, TickerMode, Trade, TradeTicker, session_scope
 from src.decision_engine.engine import Decision
 
 MODES = ("off", "ask", "auto")
@@ -30,12 +30,71 @@ def default_mode(symbol: str, settings: Settings | None = None) -> str:
     return s.default_trade_mode if symbol.upper() in {t.upper() for t in s.tickers} else "off"
 
 
+SEED_MARK = "__seeded__"
+MAX_TRADE_TICKERS = 40
+
+
+def trade_tickers(engine, settings: Settings | None = None) -> list[str]:
+    """The tickers on the user's trade list, oldest first. The first call seeds it from TICKERS in .env (plus any
+    ticker already switched to Ask / Auto on the dashboard), after that only add / remove change it."""
+    s = settings or get_settings()
+    with session_scope(engine) as sx:
+        rows = list(sx.execute(select(TradeTicker).order_by(TradeTicker.added_at, TradeTicker.symbol)).scalars())
+        if not any(r.symbol == SEED_MARK for r in rows):
+            now = _utcnow()
+            keep = list(dict.fromkeys([t.upper() for t in s.tickers]
+                                      + [r.symbol for r in sx.execute(select(TickerMode)).scalars() if r.mode != "off"]))
+            have = {r.symbol for r in rows}
+            sx.add(TradeTicker(symbol=SEED_MARK, added_at=now))
+            for i, sym in enumerate(keep):
+                if sym not in have:
+                    sx.add(TradeTicker(symbol=sym, added_at=now + timedelta(microseconds=i)))
+            sx.flush()
+            rows = list(sx.execute(select(TradeTicker).order_by(TradeTicker.added_at, TradeTicker.symbol)).scalars())
+        return [r.symbol for r in rows if r.symbol != SEED_MARK]
+
+
+def add_trade_ticker(engine, symbol: str, settings: Settings | None = None) -> tuple[bool, str]:
+    """Put a ticker on the trade list. It starts Off: nothing is traded until you choose Ask or Auto for it."""
+    symbol = symbol.strip().upper()
+    if not symbol or not symbol.replace(".", "").replace("-", "").isalnum() or len(symbol) > 10:
+        return False, "that is not a valid ticker"
+    cur = trade_tickers(engine, settings)
+    if symbol in cur:
+        return False, f"{symbol} is already on the trade list"
+    if len(cur) >= MAX_TRADE_TICKERS:
+        return False, f"the trade list is full ({MAX_TRADE_TICKERS}); remove one first"
+    with session_scope(engine) as sx:
+        sx.add(TradeTicker(symbol=symbol, added_at=_utcnow()))
+    set_mode(engine, symbol, "off")
+    return True, ""
+
+
+def remove_trade_ticker(engine, symbol: str, settings: Settings | None = None) -> tuple[bool, str]:
+    """Take a ticker off the trade list (the scheduler stops looking at it). Refused while a position is open."""
+    symbol = symbol.strip().upper()
+    trade_tickers(engine, settings)  # make sure the list was seeded before deleting from it
+    with session_scope(engine) as sx:
+        if sx.execute(select(Trade).where(Trade.symbol == symbol, Trade.status.in_(["open", "filled"]))).scalars().first():
+            return False, f"{symbol} has an open position: close it first"
+        row = sx.get(TradeTicker, symbol)
+        if row is None:
+            return False, f"{symbol} is not on the trade list"
+        sx.delete(row)
+        mode = sx.get(TickerMode, symbol)
+        if mode is not None:
+            sx.delete(mode)
+        for p in sx.execute(select(PendingOrder).where(PendingOrder.symbol == symbol, PendingOrder.status == "pending")).scalars():
+            p.status, p.decided_at, p.note = "rejected", _utcnow(), "ticker removed from the trade list"
+    return True, ""
+
+
 def get_modes(engine, symbols=None, settings: Settings | None = None) -> dict[str, str]:
-    """Effective mode for each symbol (configured tickers by default, plus anything stored)."""
+    """Effective mode for each trade-list ticker (or for the `symbols` asked about)."""
     s = settings or get_settings()
     with session_scope(engine) as sx:
         stored = {r.symbol: r.mode for r in sx.execute(select(TickerMode)).scalars()}
-    syms = list(dict.fromkeys([*(symbols or s.tickers), *stored]))
+    syms = list(dict.fromkeys(symbols if symbols else trade_tickers(engine, s)))
     return {sym: stored.get(sym, default_mode(sym, s)) for sym in syms}
 
 

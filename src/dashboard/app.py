@@ -161,7 +161,7 @@ with st.sidebar:
     st.caption(f"DB `{DB.split('///')[-1]}`  ·  times in America/Chicago")
 
 RUN_EVERY = None if refresh == "Off" else refresh
-tickers = tuple(S.tickers)  # the trade list (TICKERS in .env): the only symbols the scheduler ever trades
+tickers = tuple(control.trade_tickers(engine, S))  # YOUR trade list (add / remove in Trade control): the only symbols the scheduler trades
 watch = [w for w in U.load_watchlist() if w not in tickers]  # research-only symbols you opened and starred
 scan_syms = tuple(tickers) + tuple(watch)
 SIG = control.change_signature(engine)  # what trade control compares against, to redraw the page on any change
@@ -298,10 +298,8 @@ def _mode_changed(sym_: str) -> None:
 def trade_control():
     if control.change_signature(engine) != st.session_state.get("_sig"):
         st.rerun()  # a trade / approval / close changed in the database: redraw the whole page, no manual refresh
-    viewed = [x for x in (st.session_state.get("viewing"), st.session_state.get("sym")) if x]
-    syms = list(dict.fromkeys([*tickers, *watch, *viewed]))
-    modes = control.get_modes(engine, syms, S)
-    syms = list(dict.fromkeys([*syms, *modes]))
+    syms = list(control.trade_tickers(engine, S))  # only what you added: searching or viewing a ticker never puts it here
+    modes = control.get_modes(engine, syms, S) if syms else {}
     pend = control.list_pending(engine, "pending")
     _risk = control.get_risk(engine, S)
     n_active = sum(1 for v in modes.values() if v != "off")
@@ -320,14 +318,35 @@ def trade_control():
         h1, h2 = st.columns([3, 2])
         h1.markdown(f"**Trade control** · {n_active} of {len(syms)} tickers active today")
         h2.caption("Only tickers set to Ask or Auto are scanned for entries.", help=_MODE_HELP)
+        if not syms:
+            st.info("Your trade list is empty. Add a ticker below to start. New tickers begin Off; pick Ask or Auto when you want signals.")
         per_row = 4
         for i in range(0, len(syms), per_row):
             cols = st.columns(per_row)
             for col, s_ in zip(cols, syms[i:i + per_row]):
                 with col:
-                    st.caption(f"**{s_}**" + ("" if s_ in tickers else "  ·  ☆ research"))
+                    st.caption(f"**{s_}**")
                     st.segmented_control(f"Mode {s_}", ["Off", "Ask", "Auto"], default=modes[s_].title(), key=f"mode_{s_}",
                                          on_change=_mode_changed, args=(s_,), label_visibility="collapsed")
+                    if st.button("✕ Remove", key=f"rmt_{s_}", help=f"Take {s_} off the trade list (refused while a position is open)"):
+                        ok, why = control.remove_trade_ticker(engine, s_, S)
+                        st.toast(f"{s_} removed" if ok else why, icon="✅" if ok else "⚠️")
+                        if ok:
+                            st.session_state.pop(f"mode_{s_}", None)
+                            st.rerun()
+        with st.expander("Add a ticker to trade"):
+            _na = _assets()
+            _nn = {a["symbol"]: a.get("name", "") for a in _na}
+            a1, a2 = st.columns([4, 1])
+            pick_t = a1.selectbox("Add ticker", options=sorted(_nn), index=None, key="add_ticker", label_visibility="collapsed",
+                                  placeholder="Search a US stock or ETF to add",
+                                  format_func=lambda v: f"{v} — {_nn.get(v, '')}" if _nn.get(v) else v)
+            if a2.button("Add", key="add_ticker_btn", type="primary", disabled=not pick_t):
+                ok, why = control.add_trade_ticker(engine, pick_t, S)
+                st.toast(f"{pick_t} added (Off). Choose Ask or Auto to trade it." if ok else why, icon="✅" if ok else "⚠️")
+                if ok:
+                    st.session_state["add_ticker"] = None
+                    st.rerun()
         with st.expander(f"Position size  ·  risk {_risk['risk_per_trade_pct']:.2%} per trade  ·  cap {_risk['max_position_pct']:.1%} of equity"):
             st.caption("Shares = the smallest of: (equity × risk %) ÷ stop distance, (equity × position cap) ÷ price, and buying power. "
                        "With tight stops the **position cap** is usually the one that binds, which is why trades come out the same size. "
@@ -451,23 +470,33 @@ with left:
     st.selectbox("Search", options=sorted(names), index=None, key="search", on_change=_picked, label_visibility="collapsed",
                  placeholder="Search any US stock or ETF — ticker or company name (data loads when you open it)",
                  format_func=lambda v: f"{v} — {names.get(v, '')}" if names.get(v) else v)
-    opts = list(dict.fromkeys(list(tickers) + watch + [x for x in (st.session_state.get("viewing"), st.session_state.get("sym")) if x]))
+    opts = list(dict.fromkeys(list(tickers) + watch + [x for x in [st.session_state.get("viewing")] if x]))
     if st.session_state.get("sym") not in opts:
-        st.session_state["sym"] = tickers[0]
+        st.session_state["sym"] = None  # nothing is opened until you click a ticker or search one
     sym = st.pills("Symbol", opts, selection_mode="single", label_visibility="collapsed", key="sym",
-                   format_func=lambda v: v if v in tickers else f"☆ {v}") or tickers[0]
-    if sym not in tickers:
-        c1, c2 = st.columns([1, 3])
-        if sym in watch:
-            if c1.button("★ Remove from watchlist", key="wl_rm"):
-                U.remove_from_watchlist(sym)
-                st.session_state.pop("viewing", None)
+                   format_func=lambda v: v if v in tickers else f"☆ {v}") if opts else None
+    if sym:
+        c1, c2, c3 = st.columns([1.3, 1.3, 3])
+        if sym in tickers:
+            if c1.button("− Remove from trade list", key="tl_rm"):
+                ok, why = control.remove_trade_ticker(engine, sym, S)
+                st.toast(f"{sym} removed from the trade list" if ok else why, icon="✅" if ok else "⚠️")
                 st.rerun()
-        elif c1.button("☆ Add to watchlist", key="wl_add"):
-            _, err = U.add_to_watchlist(sym)
-            st.toast(err or f"{sym} added to your watchlist")
+        elif c1.button("＋ Add to trade list", key="tl_add", type="primary", help="Starts Off. Pick Ask or Auto in Trade control to trade it."):
+            ok, why = control.add_trade_ticker(engine, sym, S)
+            st.toast(f"{sym} added (Off). Choose Ask or Auto in Trade control." if ok else why, icon="✅" if ok else "⚠️")
             st.rerun()
-        c2.caption(f"{names.get(sym) or sym} · research only until you set its mode to Ask or Auto in Trade control.")
+        if sym not in tickers:
+            if sym in watch:
+                if c2.button("★ Remove star", key="wl_rm"):
+                    U.remove_from_watchlist(sym)
+                    st.session_state.pop("viewing", None)
+                    st.rerun()
+            elif c2.button("☆ Star for research", key="wl_add"):
+                _, err = U.add_to_watchlist(sym)
+                st.toast(err or f"{sym} starred")
+                st.rerun()
+        c3.caption(f"{names.get(sym) or sym} · " + ("on your trade list" if sym in tickers else "not on your trade list: research only"))
 
     def _chart_action(act, sym_: str) -> None:
         """Carry out what the user did on the chart: confirm / reject a proposal, or move an open position's SL / TP."""
@@ -491,6 +520,9 @@ with left:
 
     @st.fragment(run_every=("60s" if RUN_EVERY else None))
     def chart_panel():
+        if not sym:
+            st.info("Pick a ticker above, or search one, to open its chart.")
+            return
         if sym not in tickers or _last_ts(sym, "15Min") == "none":
             with st.spinner(f"Loading {sym} from Alpaca ({'first open, about 10 seconds' if _last_ts(sym, '15Min') == 'none' else 'refreshing'})…"):
                 info = _ensure(sym)
@@ -536,7 +568,7 @@ with right:
     @st.fragment(run_every=RUN_EVERY)
     def news_panel():
         c1, c2 = st.columns([1.4, 1])
-        scope = c1.selectbox("News", ["All", sym], label_visibility="collapsed", key="news_scope")
+        scope = c1.selectbox("News", ["All", *([sym] if sym else [])], label_visibility="collapsed", key="news_scope")
         if c2.button("Fetch latest", key="fetch_news", help="Pull Finnhub/NewsAPI + score with FinBERT (needs keys)"):
             with st.spinner("Fetching news…"):
                 try:
@@ -604,18 +636,21 @@ with tab_council:
 with tab_scan:
     st.caption("Confluence = how many of the six conditions agree with the current EMA bias (trend, momentum band, volume spike, "
                "premium/discount zone, swing structure, order block). It is a screening aid, not a prediction — see the ML tab for evidence.")
+    if not rows:
+        st.info("No tickers to scan yet. Add one to your trade list in Trade control, or star a searched ticker for research.")
     sc = pd.DataFrame([{
         "Symbol": r["symbol"], "Price": r.get("price"), "Chg %": r.get("chg_pct"), "Bias": (r.get("bias") or "—").upper(),
         "Last signal": (f"{r['signal'].upper()} · {r['signal_age']}b ago" if r.get("signal") in ("long", "short") else "—"),
         "Confluence": r.get("confluence"), "RSI": r.get("rsi"), "Vol ×avg": r.get("vol_ratio"), "Zone": r.get("zone"),
         "Structure": r.get("structure"), "Sentiment": r.get("sentiment") if r.get("news_n") else None,
-    } for r in rows]).sort_values("Confluence", ascending=False, na_position="last")
+    } for r in rows], columns=["Symbol", "Price", "Chg %", "Bias", "Last signal", "Confluence", "RSI", "Vol ×avg", "Zone", "Structure", "Sentiment"]
+    ).sort_values("Confluence", ascending=False, na_position="last")
     st.dataframe(sc, hide_index=True, width="stretch", column_config={
         "Price": st.column_config.NumberColumn(format="%.2f"), "Chg %": st.column_config.NumberColumn(format="%+.2f%%"),
         "Confluence": st.column_config.ProgressColumn(min_value=0, max_value=6, format="%d / 6"),
         "Sentiment": st.column_config.NumberColumn(format="%+.2f"), "RSI": st.column_config.NumberColumn(format="%.1f"),
         "Vol ×avg": st.column_config.NumberColumn(format="%.2f")})
-    r = by_sym.get(sym, {})
+    r = by_sym.get(sym, {}) if sym else {}
     if r.get("checks"):
         st.markdown(f"**{sym} — confluence breakdown ({(r.get('bias') or '').upper()} bias)**")
         st.html('<div style="display:flex;gap:8px;flex-wrap:wrap">' + "".join(
@@ -778,7 +813,7 @@ with tab_set:
         ("Use unvalidated model", S.use_unvalidated_model), ("Sentiment block |score| ≥", S.sentiment_block_threshold), ("Shorts allowed", S.allow_shorts),
         ("Min reward:risk", S.min_rr), ("Flatten before close", f"{S.flatten_minutes_before_close} min" if S.flatten_at_close else "off"),
         ("No new entries before close", f"{S.no_new_entries_minutes_before_close} min"), ("Extended-hours bars", S.include_extended_hours),
-        ("Timeframe", S.timeframe), ("Tickers", ", ".join(S.tickers)),
+        ("Timeframe", S.timeframe), ("Trade list", ", ".join(tickers) or "empty (add tickers in Trade control)"),
     ], columns=["Setting", "Value"]).astype(str), hide_index=True, width="stretch")
     st.markdown("**Kill switch** — blocks every new order immediately (open positions are not touched).")
     ks_on = S.kill_switch_active

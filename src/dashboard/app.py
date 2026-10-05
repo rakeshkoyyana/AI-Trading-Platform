@@ -326,9 +326,10 @@ def trade_control():
             for col, s_ in zip(cols, syms[i:i + per_row]):
                 with col:
                     st.caption(f"**{s_}**")
-                    st.segmented_control(f"Mode {s_}", ["Off", "Ask", "Auto"], default=modes[s_].title(), key=f"mode_{s_}",
+                    m1, m2 = st.columns([1.7, 1], vertical_alignment="center")
+                    m1.segmented_control(f"Mode {s_}", ["Off", "Ask", "Auto"], default=modes[s_].title(), key=f"mode_{s_}",
                                          on_change=_mode_changed, args=(s_,), label_visibility="collapsed")
-                    if st.button("✕", key=f"rmt_{s_}", help=f"Remove {s_} from the trade list (refused while a position is open)"):
+                    if m2.button("Remove", key=f"rmt_{s_}", help=f"Remove {s_} from the trade list (refused while a position is open)"):
                         ok, why = control.remove_trade_ticker(engine, s_, S)
                         st.toast(f"{s_} removed" if ok else why, icon="✅" if ok else "⚠️")
                         if ok:
@@ -472,7 +473,7 @@ with left:
                  format_func=lambda v: f"{v} — {names.get(v, '')}" if names.get(v) else v)
     opts = list(dict.fromkeys(list(tickers) + watch + [x for x in [st.session_state.get("viewing")] if x]))
     if st.session_state.get("sym") not in opts:
-        st.session_state["sym"] = None  # nothing is opened until you click a ticker or search one
+        st.session_state["sym"] = tickers[0] if tickers else None  # one chart stays open: the first ticker on your list
     sym = st.pills("Symbol", opts, selection_mode="single", label_visibility="collapsed", key="sym",
                    format_func=lambda v: v if v in tickers else f"☆ {v}") if opts else None
     if sym:
@@ -840,11 +841,7 @@ if _logo and _logo.get("type") == "toggle_about" and _logo.get("seq") != st.sess
 
 if st.session_state.get("show_about"):
     st.html('<div id="about-alphawave" style="scroll-margin-top:12px;height:1px"></div>')
-    _ac1, _ac2 = st.columns([6, 1])
-    _ac1.markdown("#### About AlphaWave")
-    if _ac2.button("✕", key="about_close_top", help="Close"):
-        st.session_state["show_about"] = False
-        st.rerun()
+    st.markdown("#### About AlphaWave")
     chart_widget(about_html(), key="about", height=1500, autoheight=True, scroll_token=st.session_state.get("_about_scroll", ""))
     if st.button("✕", key="about_close_bottom", help="Close"):
         st.session_state["show_about"] = False

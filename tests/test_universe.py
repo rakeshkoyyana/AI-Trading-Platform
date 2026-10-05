@@ -117,10 +117,10 @@ def test_search_open_and_watchlist_flow_in_the_app(tmp_path, monkeypatch):
     try:
         at = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "src" / "dashboard" / "app.py"), default_timeout=180).run()
         assert not at.exception, [e.value for e in at.exception]
-        assert loads == [] and not at.session_state["sym"]  # nothing opens, nothing loads, until you pick a ticker
+        assert loads == ["SPY"] and at.session_state["sym"] == "SPY"  # one chart stays open: the first ticker on your list
         at.selectbox(key="search").select("PLTR").run()
         assert not at.exception, [e.value for e in at.exception]
-        assert loads == ["PLTR"] and at.session_state["sym"] == "PLTR"
+        assert loads == ["SPY", "PLTR"] and at.session_state["sym"] == "PLTR"
         from src.execution import control
         from src.db.schema import get_engine
         assert "PLTR" not in control.trade_tickers(get_engine(db))  # searching never adds it to Trade control

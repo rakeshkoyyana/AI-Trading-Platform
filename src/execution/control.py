@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 
 from src.config import Settings, get_settings
-from src.db.schema import CloseRequest, ModifyRequest, PendingOrder, RiskOverride, TickerMode, Trade, session_scope
+from src.db.schema import Bar, CloseRequest, ModifyRequest, PendingOrder, RiskOverride, TickerMode, Trade, session_scope
 from src.decision_engine.engine import Decision
 
 MODES = ("off", "ask", "auto")
@@ -260,7 +260,10 @@ def request_modify(engine, symbol: str, stop: float | None, target: float | None
                        .order_by(Trade.id.desc())).scalars().first()
         if t is None:
             return None, "no open position for this ticker"
-        ref = t.entry_price
+        # Judge the new levels against where the price is NOW (latest stored bar), not where the trade was entered:
+        # a long that is up 3% must be allowed to move its stop above the entry price (break-even / trailing stop).
+        last = sx.execute(select(Bar.close).where(Bar.symbol == symbol).order_by(Bar.timestamp.desc())).scalars().first()
+        ref = float(last) if last else t.entry_price
         ok, why = validate_levels(t.direction, ref, stop, target if t.take_profit else None, t.stop_loss, settings)
         if not ok:
             return None, why

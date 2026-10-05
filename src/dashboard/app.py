@@ -201,6 +201,26 @@ def header_and_tape():
 header_and_tape()
 
 
+def _sltp_form(symbol: str, stop, target, key: str) -> None:
+    """Type a new stop / take-profit for an open position and send it to the broker (alternative to dragging chart lines)."""
+    c1, c2, c3 = st.columns([1, 1, 1])
+    new_stop = c1.number_input("Stop loss", min_value=0.01, value=float(stop or 0.01), step=0.01, format="%.2f",
+                               key=f"{key}_sl_{symbol}_{stop}", disabled=not stop)
+    if target:
+        new_tp = c2.number_input("Take-profit", min_value=0.01, value=float(target), step=0.01, format="%.2f", key=f"{key}_tp_{symbol}_{target}")
+    else:
+        new_tp = None
+        c2.caption("This trade has no take-profit order (it exits on the Pine rules), so only the stop can be changed.")
+    if c3.button("Apply to broker", key=f"{key}_apply_{symbol}", type="primary"):
+        rid, why = control.request_modify(engine, symbol, float(new_stop) if stop else None, float(new_tp) if new_tp else None, settings=S)
+        st.toast("Queued – applied at the broker within ~2 s" if rid else f"Not applied: {why}", icon="✅" if rid else "⚠️")
+        st.rerun()
+    last = next((r for r in control.list_modify_requests(engine, None) if r.symbol == symbol), None)
+    if last is not None:
+        icon = {"done": "✅", "failed": "⚠️", "pending": "⏳", "expired": "⌛"}.get(last.status, "")
+        st.caption(f"Last change: {icon} {last.status}" + (f" – {last.note}" if last.note else ""))
+
+
 def _fmt_t(x) -> str:
     return "—" if x is None or pd.isna(x) else pd.Timestamp(x, tz="UTC").tz_convert(m.TZ).strftime("%b %d %H:%M:%S CT")
 
@@ -228,6 +248,9 @@ def _trade_dialog(trade_id: int) -> None:
     st.caption(f"Opened {_fmt_t(t['entry_time'])}  ·  closed {_fmt_t(t['exit_time'])}  ·  mode {t['mode']}"
                + (f"  ·  planned reward:risk {dv['target_rr']:.2f}" if dv["target_rr"] else "")
                + (f"  ·  broker order {det['trade']['broker_order_id']}" if det["trade"].get("broker_order_id") else ""))
+    if t["status"] in ("open", "filled"):
+        st.markdown("**Change stop / take-profit**")
+        _sltp_form(t["symbol"], t["stop_loss"], t["take_profit"], f"dlg{t['id']}")
     if t.get("note"):
         st.info(t["note"])
     pr = det["proposal"]
@@ -376,6 +399,8 @@ def trade_control():
             elif c2.button(f"Close {h['symbol']}", key=f"cl_{h['symbol']}"):
                 st.session_state["confirm_close"] = h["symbol"]
                 st.rerun()
+            with st.expander(f"Edit stop / take-profit · {h['symbol']}"):
+                _sltp_form(h["symbol"], h["stop"], h["target"], "pos")
         recent = [r for r in control.list_pending(engine, None) if r.status in {"executed", "failed", "rejected"}][:4]
         gone = [r for r in control.list_close_requests(engine, None) if r.status in {"done", "failed", "expired"}][:2]
         for r in gone:

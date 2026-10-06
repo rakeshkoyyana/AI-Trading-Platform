@@ -180,3 +180,5 @@ One-time setup (about 5 minutes):
 
 Safety: only the user IDs in `DISCORD_APPROVER_IDS` can click (anyone else gets a private "not allowed"); with no IDs set the feature stays off. Keep the token secret like your Alpaca keys. If the bot can't post, the normal webhook message is sent instead. Limits: Discord can't edit share size or stop/target, so use the dashboard for that.
 
+**Test the buttons before a real trade:** with the scheduler running (double-click AlphaWave first), run `python -m src.discord_approvals --test` from the repo folder (with the venv active). Discord shows a "TEST proposal" with Approve / Reject buttons; click one and the message updates to "Test OK ... Nothing was traded." It never creates a pending order and never touches the broker. If the command reports an error (wrong token, bot not allowed in the channel) it says what to fix.
+

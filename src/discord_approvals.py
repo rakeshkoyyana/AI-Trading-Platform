@@ -21,15 +21,48 @@ def custom_id(action: str, pending_id: int) -> str:
 def handle_click(engine, cid: str, user_id: int, approver_ids, user_name: str = "") -> tuple[bool, str]:
     """Pure decision logic for one button click. Returns (changed, message shown to the clicker/channel)."""
     parts = (cid or "").split(":")
-    if len(parts) != 3 or parts[0] != PREFIX or parts[1] not in {"approve", "reject"} or not parts[2].isdigit():
+    if (len(parts) != 3 or parts[0] != PREFIX or not parts[2].isdigit()
+            or parts[1] not in {"approve", "reject", "testapprove", "testreject"}):
         return False, "Unknown button."
     if user_id not in set(approver_ids):
         return False, "You are not allowed to approve trades."
-    approve, pid = parts[1] == "approve", int(parts[2])
     who = user_name or str(user_id)
+    if parts[1].startswith("test"):  # the self-test message: proves the buttons work, touches nothing
+        word = "Approve" if parts[1] == "testapprove" else "Reject"
+        return True, f"🧪 Test OK: the {word} button works for {who}. Nothing was traded."
+    approve, pid = parts[1] == "approve", int(parts[2])
     if control.decide(engine, pid, approve, note=f"via Discord ({who})"):
         return True, (f"✅ Approved by {who} - sending the order." if approve else f"❌ Rejected by {who}.")
     return False, "Too late: this request was already decided or has expired."
+
+
+def test_message_payload() -> dict:
+    """A fake proposal with the real buttons (REST format). Clicking it never touches orders or the database."""
+    return {
+        "content": ("🧪 **TEST proposal** - APPROVE? LONG TEST x1 @ ~100.00 | stop 99.00, target 102.00\n"
+                    "Click a button to check that Discord approvals work. Nothing will be traded."),
+        "components": [{"type": 1, "components": [
+            {"type": 2, "style": 3, "label": "Approve", "custom_id": custom_id("testapprove", 0)},
+            {"type": 2, "style": 4, "label": "Reject", "custom_id": custom_id("testreject", 0)},
+        ]}],
+    }
+
+
+def send_test_message(settings, post=None) -> tuple[bool, str]:
+    """Post the test proposal through Discord's REST API (no second gateway connection, so it can run while the
+    scheduler is up: the scheduler's bot is the one that answers the click)."""
+    if not DiscordApprovals.configured(settings):
+        return False, "Not configured: set DISCORD_BOT_TOKEN, DISCORD_CHANNEL_ID and DISCORD_APPROVER_IDS in .env."
+    import requests
+
+    post = post or requests.post
+    r = post(f"https://discord.com/api/v10/channels/{settings.discord_channel_id}/messages",
+             headers={"Authorization": f"Bot {settings.discord_bot_token}"}, json=test_message_payload(), timeout=15)
+    if 200 <= r.status_code < 300:
+        return True, "Test message sent. Open Discord and click Approve / Reject."
+    hint = {401: "the bot token is wrong", 403: "the bot can't post there (re-invite it, or give it View Channel + Send Messages)",
+            404: "the channel ID is wrong or the bot isn't in that server"}.get(r.status_code, "see the status above")
+    return False, f"Discord said {r.status_code}: {hint}."
 
 
 class DiscordApprovals:
@@ -114,3 +147,15 @@ class DiscordApprovals:
                 asyncio.run_coroutine_threadsafe(self._client.close(), self._loop).result(timeout=5)
             except Exception:  # noqa: BLE001
                 pass
+
+
+if __name__ == "__main__":
+    import sys
+
+    from src.config import get_settings
+
+    if "--test" in sys.argv:
+        ok, msg = send_test_message(get_settings())
+        print(msg)
+        sys.exit(0 if ok else 1)
+    print("usage: python -m src.discord_approvals --test")

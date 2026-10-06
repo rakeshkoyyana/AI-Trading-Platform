@@ -26,6 +26,21 @@ def _csv(value: str | None, default: list[str]) -> list[str]:
     return [v.strip().upper() for v in value.split(",") if v.strip()]
 
 
+def _discord_ids(name: str, raw: str | None) -> tuple:
+    """Comma-separated Discord IDs (plain numbers). A bad value switches the Discord buttons off with a warning;
+    it must never stop the dashboard or the scheduler from starting."""
+    out = []
+    for part in (raw or "").replace(" ", "").split(","):
+        if not part:
+            continue
+        if not part.isdigit():
+            print(f"[settings] WARNING: {name} must be plain numbers (got something else); Discord approval buttons are off. "
+                  f"Fix {name} in .env.")
+            return ()
+        out.append(int(part))
+    return tuple(out)
+
+
 @dataclass(frozen=True)
 class Settings:
     # --- secrets -----------------------------------------------------------
@@ -132,8 +147,8 @@ def get_settings() -> Settings:
         newsapi_key=env("NEWSAPI_KEY", ""),
         discord_webhook_url=env("DISCORD_WEBHOOK_URL", ""),
         discord_bot_token=env("DISCORD_BOT_TOKEN", ""),
-        discord_channel_id=int(env("DISCORD_CHANNEL_ID", "0") or 0),
-        discord_approver_ids=tuple(int(x) for x in (env("DISCORD_APPROVER_IDS", "") or "").replace(" ", "").split(",") if x),
+        discord_channel_id=(_discord_ids("DISCORD_CHANNEL_ID", env("DISCORD_CHANNEL_ID", "")) or (0,))[0],
+        discord_approver_ids=_discord_ids("DISCORD_APPROVER_IDS", env("DISCORD_APPROVER_IDS", "")),
         trading_mode=mode,
         tickers=_csv(env("TICKERS"), DEFAULT_TICKERS),
         timeframe=env("TIMEFRAME", "15Min"),

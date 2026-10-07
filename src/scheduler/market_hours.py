@@ -77,6 +77,28 @@ def flatten_time(day: date, settings: Settings | None = None) -> datetime | None
     return None if b is None else b[1] - timedelta(minutes=s.flatten_minutes_before_close)
 
 
+def late_entry_warning(now: datetime | None = None, settings: Settings | None = None) -> str:
+    """Reminder for entries taken close to the end-of-day flatten ('' when not late, or flatten is off).
+
+    `now` is naive UTC (default: the real clock). Positions are day trades: they are closed at the flatten time,
+    not carried to the next day, so a late entry has little time to reach its target.
+    """
+    s = settings or get_settings()
+    if not s.flatten_at_close:
+        return ""
+    local = to_local(now or utc_now(), s)
+    ft = flatten_time(local.date(), s)
+    if ft is None or local >= ft:
+        return ""
+    left = int((ft - local).total_seconds() // 60)
+    if left > s.late_entry_warn_minutes:
+        return ""
+    h, m = divmod(left, 60)
+    in_ = f"{h}h {m:02d}m" if h else f"{m} min"
+    return (f"LATE ENTRY: all positions are closed at {ft.strftime('%H:%M')} {ft.tzname()} (in {in_}), "
+            f"not held overnight - little time left to reach the target")
+
+
 def can_open_new_positions(now: datetime | None = None, settings: Settings | None = None) -> bool:
     s = settings or get_settings()
     local = to_local(now or utc_now(), s)

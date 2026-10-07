@@ -99,6 +99,7 @@ class Settings:
     min_rr: float = 1.5
     signal_max_age_bars: int = 2  # ignore signals older than this many bars (stale data guard)
     flatten_at_close: bool = True  # close all positions at session end (day-trading)
+    late_entry_warn_minutes: int = 115  # warn on entries this many minutes (or fewer) before the flatten (115 = from 13:00 CT)
     flatten_minutes_before_close: int = 5  # orders sent AT the close can't fill until tomorrow
     no_new_entries_minutes_before_close: int = 15
     bar_delay_seconds: int = 20  # wait after a bar closes before fetching it
@@ -178,6 +179,7 @@ def get_settings() -> Settings:
         signal_max_age_bars=int(env("SIGNAL_MAX_AGE_BARS", "2")),
         flatten_at_close=env("FLATTEN_AT_CLOSE", "true").lower() in {"1", "true", "yes", "on"},
         flatten_minutes_before_close=int(env("FLATTEN_MINUTES_BEFORE_CLOSE", "5")),
+        late_entry_warn_minutes=int(env("LATE_ENTRY_WARN_MINUTES", "115")),
         no_new_entries_minutes_before_close=int(env("NO_NEW_ENTRIES_MINUTES_BEFORE_CLOSE", "15")),
         bar_delay_seconds=int(env("BAR_DELAY_SECONDS", "20")),
     )

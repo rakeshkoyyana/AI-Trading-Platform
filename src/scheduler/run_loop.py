@@ -39,6 +39,7 @@ from src.scheduler.market_hours import (
     bar_is_closed,
     can_open_new_positions,
     flatten_time,
+    late_entry_warning,
     is_trading_window_now,
     session_bounds,
     to_local,
@@ -276,7 +277,7 @@ class TradingCycle:
         return reason
 
     # ---------------------------------------------------------------- orders
-    def _execute(self, d: Decision, sig_id: int | None, state: AccountState) -> dict:
+    def _execute(self, d: Decision, sig_id: int | None, state: AccountState, late: str = "") -> dict:
         side = "buy" if d.direction == "long" else "sell"
         order = self.broker.place_order(d.symbol, side, d.qty, d.stop_loss, d.take_profit)
         tid = record_order(self.engine, d, order, "live" if self.s.is_live else "paper", sig_id)
@@ -287,7 +288,7 @@ class TradingCycle:
         p = f"P(win) {d.probability:.2f}, " if d.probability is not None else ""
         tgt = f"target {d.take_profit} ({d.target_source})" if d.take_profit else "exit by Pine rules (RSI 70/30, trend flip)"
         self.notify(f"{d.direction.upper()} {d.symbol} x{d.qty} @ ~{d.entry:.2f} | stop {d.stop_loss} "
-                    f"({d.stop_source or 'saved'}) | {tgt} | {p}", "trade")
+                    f"({d.stop_source or 'saved'}) | {tgt} | {p}" + (f"\n⏰ {late}" if late else ""), "trade")
         return dict(traded=True, trade_id=tid, qty=d.qty)
 
     def _process_symbol(self, sym: str, now: datetime, state: AccountState, bundle, can_open: bool) -> dict:
@@ -329,12 +330,15 @@ class TradingCycle:
                 tgt = f"stop {d.stop_loss}" + ("" if d.take_profit is None else f", target {d.take_profit}")
                 text = (f"APPROVE? {d.direction.upper()} {sym} x{d.qty} @ ~{d.entry:.2f} | {tgt} | "
                         f"expires in {self.s.approval_ttl_minutes} min")
+                late = late_entry_warning(now, self.s)
+                if late:
+                    text += f"\n⏰ {late}"
                 if self.approvals_bot and self.approvals_bot.post_proposal(pid, f"📈 **[{self.s.trading_mode.upper()}]** {text}"):
                     alerts.log_event("trade", text, self.engine)  # buttons posted in Discord; dashboard works too
                 else:
                     self.notify(text + " | open the dashboard to approve", "trade")
             return res
-        out = self._execute(d, sig_id, state)
+        out = self._execute(d, sig_id, state, late_entry_warning(now, self.s))
         res.update(out)
         return res
 
@@ -522,7 +526,7 @@ class TradingCycle:
                 self.notify(f"{p.symbol}: approved order NOT sent - {why}", "warning")
                 results.append(dict(id=p.id, symbol=p.symbol, sent=False, why=why))
                 continue
-            out = self._execute(control.decision_from_pending(p), p.signal_id, state)
+            out = self._execute(control.decision_from_pending(p), p.signal_id, state, late_entry_warning(now, self.s))
             positions = {k: v for k, v in state.open_positions.items()}
             if out.get("traded"):
                 control.mark(self.engine, p.id, "executed", trade_id=out.get("trade_id"))

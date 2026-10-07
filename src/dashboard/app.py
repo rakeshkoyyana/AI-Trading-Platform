@@ -35,6 +35,7 @@ from src.data_ingestion.backfill import latest_bar_time, load_bars
 from src.data_ingestion.on_demand import ensure_symbol_data
 from src.decision_engine import council
 from src.execution import control
+from src.scheduler.market_hours import late_entry_warning
 from src.db.schema import get_engine, init_db
 
 st.set_page_config(page_title=brand.NAME, page_icon=brand.page_icon(), layout="wide", initial_sidebar_state="collapsed")
@@ -385,6 +386,9 @@ def trade_control():
             if c3.button("Reject", key=f"rj_{p.id}"):
                 control.decide(engine, p.id, False)
                 st.rerun()
+            _late = late_entry_warning(None, S)
+            if _late:
+                c1.warning(_late, icon="⏰")
             cv = council.get_vote(engine, p.symbol, p.signal_time) if p.signal_time else None
             if cv is not None:
                 icon = {"agree": "✅", "mixed": "➖", "disagree": "⚠️"}.get(cv.verdict, "")

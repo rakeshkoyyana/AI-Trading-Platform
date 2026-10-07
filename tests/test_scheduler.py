@@ -229,6 +229,14 @@ def test_build_scheduler_registers_all_jobs(world):
     assert {j.id for j in sched.get_jobs()} == {"session_start", "cycle", "flatten", "session_end", "sentiment", "approvals", "closes", "reconcile", "modifies"}
 
 
+def test_frequent_polling_jobs_tolerate_a_late_start(world):
+    """A scheduler stall of a few seconds must not skip (and alert on) the 2s/30s/1min polling jobs."""
+    jobs = {j.id: j for j in build_scheduler(world["make"]()).get_jobs()}
+    for jid in ("approvals", "closes", "modifies", "reconcile", "flatten"):
+        assert jobs[jid].misfire_grace_time >= 30, jid
+        assert jobs[jid].coalesce and jobs[jid].max_instances == 1  # still never piles up or runs twice at once
+
+
 def test_model_that_does_not_improve_never_gates_trades():
     from src.scheduler.run_loop import gating_bundle
 

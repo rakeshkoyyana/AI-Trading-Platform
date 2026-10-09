@@ -540,6 +540,11 @@ def _cron_minutes(tf_min: int, offset_min: int = 0) -> str:
     return ",".join(str((m + offset_min) % 60) for m in range(0, 60, tf_min))
 
 
+# The frequent jobs only poll for work (requests wait in the DB), so running a few seconds late is harmless.
+# Without a grace period APScheduler skips a tick that starts >1s late and we'd alert for nothing.
+_LATE_OK_S = 30
+
+
 def build_scheduler(cycle: TradingCycle):
     from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_MISSED
     from apscheduler.schedulers.blocking import BlockingScheduler
@@ -560,20 +565,20 @@ def build_scheduler(cycle: TradingCycle):
                               second=s.bar_delay_seconds, timezone=tz),
                   id="cycle", max_instances=1, coalesce=True, misfire_grace_time=120)
     sched.add_job(cycle.process_approvals, IntervalTrigger(seconds=2, timezone=tz), id="approvals",
-                  max_instances=1, coalesce=True)
+                  max_instances=1, coalesce=True, misfire_grace_time=_LATE_OK_S)
     sched.add_job(cycle.process_closes, IntervalTrigger(seconds=2, timezone=tz), id="closes",
-                  max_instances=1, coalesce=True)
+                  max_instances=1, coalesce=True, misfire_grace_time=_LATE_OK_S)
     sched.add_job(cycle.process_modifies, IntervalTrigger(seconds=2, timezone=tz), id="modifies",
-                  max_instances=1, coalesce=True)
+                  max_instances=1, coalesce=True, misfire_grace_time=_LATE_OK_S)
     sched.add_job(cycle.quick_reconcile, IntervalTrigger(seconds=30, timezone=tz), id="reconcile",
-                  max_instances=1, coalesce=True)
+                  max_instances=1, coalesce=True, misfire_grace_time=_LATE_OK_S)
     sched.add_job(cycle.maybe_flatten, CronTrigger(day_of_week=dow, hour=f"{sh}-{eh}", minute="*", timezone=tz),
-                  id="flatten", max_instances=1, coalesce=True)
+                  id="flatten", max_instances=1, coalesce=True, misfire_grace_time=_LATE_OK_S)
     sched.add_job(cycle.end_session, CronTrigger(day_of_week=dow, hour=eh, minute=em + 2, timezone=tz),
                   id="session_end", misfire_grace_time=1800)
     sched.add_job(lambda: refresh_sentiment(cycle.universe(), engine=cycle.engine),
                   CronTrigger(day_of_week=dow, hour=f"{sh}-{eh - 1}", minute=5, timezone=tz),
-                  id="sentiment", max_instances=1, coalesce=True)
+                  id="sentiment", max_instances=1, coalesce=True, misfire_grace_time=300)
 
     def on_event(ev):
         kind = "error" if ev.code == EVENT_JOB_ERROR else "warning"

@@ -125,7 +125,8 @@ The scheduler needs a machine (or small VM) that stays awake and online all sess
 
 ## 5. Safety
 - **Kill switch:** `touch KILL_SWITCH` blocks all new orders immediately; `rm KILL_SWITCH` re-enables.
-- Positions are flattened 5 min before the close; no new entries in the last 15 min.
+- Positions are day trades: flattened 5 min before the close (14:55 CT), never held overnight; no new entries in the last 15 min.
+- Entries from 13:00 CT onward (`LATE_ENTRY_WARN_MINUTES`, default 115 min before the flatten) carry a "LATE ENTRY" reminder in the Discord proposal, the dashboard approval row and the trade alert.
 - Daily loss halt (2 %), max 3 positions, 5 % max position, 0.5 % risk per trade — all env-tunable.
 - Live orders require `TRADING_MODE=live` **and** `LIVE_TRADING_CONFIRMED=true`. Don't, until the paper run says so.
 

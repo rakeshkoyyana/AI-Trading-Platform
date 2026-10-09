@@ -226,7 +226,7 @@ def test_end_session_summarises(world):
 
 def test_build_scheduler_registers_all_jobs(world):
     sched = build_scheduler(world["make"]())
-    assert {j.id for j in sched.get_jobs()} == {"session_start", "cycle", "flatten", "session_end", "sentiment", "approvals", "closes", "reconcile", "modifies"}
+    assert {j.id for j in sched.get_jobs()} == {"session_start", "cycle", "flatten", "session_end", "sentiment", "approvals", "closes", "reconcile", "modifies", "heartbeat"}
 
 
 def test_frequent_polling_jobs_tolerate_a_late_start(world):

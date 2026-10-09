@@ -3,6 +3,7 @@
 #   - nothing running            -> start both
 #   - running, code unchanged    -> asks: Open dashboard / Restart / Stop
 #   - running, new code pulled   -> restart both so new features show up
+# A small watchdog process alerts Discord if the scheduler dies silently (e.g. killed for memory) in market hours.
 # Stopping or restarting only affects the local processes; it never touches positions or orders at the broker.
 # Keep the Mac awake yourself (e.g. `caffeinate -dims`); this script does not.
 set -u
@@ -39,6 +40,10 @@ main() {
     local pf="$RUN_DIR/$1.pid"
     if alive "$pf"; then cat "$pf"; kill "$(cat "$pf")" 2>/dev/null; fi
     rm -f "$pf"
+  }
+  start_watchdog() {  # tiny separate process: Discord alert if the scheduler dies silently during market hours
+    nohup "$PY" -m src.watchdog >>"$LOG_DIR/watchdog.log" 2>&1 &
+    echo $! >"$RUN_DIR/watchdog.pid"
   }
   start_scheduler() {
     nohup "$PY" -m src.scheduler.run_loop >>"$LOG_DIR/scheduler.log" 2>&1 &
@@ -104,7 +109,8 @@ main() {
       case "$choice" in Stop) action=stop;; Restart) action=restart;; *) action=open;; esac
     fi
     case "${action:-open}" in
-      stop)    o1="$(term_proc scheduler)"; o2="$(term_proc dashboard)"
+      stop)    term_proc watchdog >/dev/null   # first, so a deliberate stop doesn't raise the "scheduler down" alert
+               o1="$(term_proc scheduler)"; o2="$(term_proc dashboard)"
                [ -n "$o1" ] && wait_dead "$o1" 10; [ -n "$o2" ] && wait_dead "$o2" 5; notify "Stopped the scheduler and dashboard. Positions at the broker are unchanged."; return 0;;
       restart) running="restart";;
     esac
@@ -113,6 +119,7 @@ main() {
   if [ -n "$running" ] && { [ "$running" = "restart" ] || [ "$(cat "$RUN_DIR/version" 2>/dev/null)" != "$version" ]; }; then
     # Stop both at once. The dashboard comes back immediately; the scheduler restarts in the background
     # as soon as the old one has exited (it posts its Discord "stopped" alert first), so the browser isn't kept waiting.
+    term_proc watchdog >/dev/null
     sched_old="$(term_proc scheduler)"; dash_old="$(term_proc dashboard)"
     [ -n "$dash_old" ] && wait_dead "$dash_old" 2   # the dashboard keeps no state: short grace
     for _ in $(seq 1 15); do port_open || break; sleep 0.2; done
@@ -140,6 +147,8 @@ main() {
     echo $! >"$RUN_DIR/dashboard.pid"
     started="${started:+$started + }dashboard"
   fi
+
+  alive "$RUN_DIR/watchdog.pid" || start_watchdog   # (re)started with a grace period while the scheduler boots
 
   # --- wait for the dashboard, then open it ------------------------------------------------
   for _ in $(seq 1 150); do port_open && break; sleep 0.2; done

@@ -25,6 +25,7 @@ import streamlit.components.v1 as components
 
 from src.config import get_settings
 from src import universe as U
+from src import heartbeat
 from src.dashboard import alerts_ui
 from src.dashboard import brand
 from src.dashboard import data as D
@@ -302,6 +303,9 @@ def trade_control():
     syms = list(control.trade_tickers(engine, S))  # only what you added: searching or viewing a ticker never puts it here
     modes = control.get_modes(engine, syms, S) if syms else {}
     pend = control.list_pending(engine, "pending")
+    _hb_state, _hb_msg = heartbeat.check(utc_now(), S)
+    if _hb_state == "down":
+        st.error(f"**Scheduler is not running.** {_hb_msg}", icon="🚨")
     _risk = control.get_risk(engine, S)
     n_active = sum(1 for v in modes.values() if v != "off")
     seen = st.session_state.setdefault("alerted_ids", set())

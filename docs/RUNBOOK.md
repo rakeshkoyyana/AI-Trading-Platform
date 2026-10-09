@@ -182,3 +182,10 @@ Safety: only the user IDs in `DISCORD_APPROVER_IDS` can click (anyone else gets 
 
 **Test the buttons before a real trade:** with the scheduler running (double-click AlphaWave first), run `python -m src.discord_approvals --test` from the repo folder (with the venv active). Discord shows a "TEST proposal" with Approve / Reject buttons; click one and the message updates to "Test OK ... Nothing was traded." It never creates a pending order and never touches the broker. If the command reports an error (wrong token, bot not allowed in the channel) it says what to fix.
 
+
+## Watchdog: "Scheduler DOWN" alert
+The AlphaWave app also starts a tiny `src.watchdog` process (log: `logs/watchdog.log`). The scheduler writes `data/run/heartbeat.json`
+every 15 s; during market hours, if it goes quiet for 2 min (or is alive but finishes no cycle for 35 min) the watchdog posts
+**SCHEDULER DOWN** to Discord (repeated every 15 min) and the dashboard shows a red banner. It says whether the process is gone
+(killed / crashed, e.g. out of memory) or frozen. Fix: open AlphaWave -> Restart. A "running again" message follows on recovery.
+Stopping from the app stops the watchdog first, so a deliberate stop does not alert. Positions at the broker are never touched.

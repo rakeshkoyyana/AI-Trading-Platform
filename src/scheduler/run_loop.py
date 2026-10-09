@@ -21,7 +21,7 @@ from pathlib import Path
 import pandas as pd
 from sqlalchemy import select
 
-from src import alerts
+from src import alerts, heartbeat
 from src.config import PROJECT_ROOT, Settings, get_settings
 from src.data_ingestion import get_bars_with_fallback
 from src.data_ingestion.backfill import backfill, load_bars
@@ -221,6 +221,7 @@ class TradingCycle:
         except Exception as exc:  # noqa: BLE001 - never let one cycle kill the process
             self.notify(f"Cycle failed: {exc}\n{traceback.format_exc()[-800:]}", "error")
             out["error"] = str(exc)
+        heartbeat.write(last_cycle=time.time())  # a cycle finished (the watchdog flags a long stretch without one)
         return out
 
     def _closed_bars(self, sym: str, now: datetime) -> pd.DataFrame:
@@ -575,6 +576,9 @@ def build_scheduler(cycle: TradingCycle):
                   CronTrigger(day_of_week=dow, hour=f"{sh}-{eh - 1}", minute=5, timezone=tz),
                   id="sentiment", max_instances=1, coalesce=True)
 
+    sched.add_job(heartbeat.write, IntervalTrigger(seconds=15, timezone=tz), id="heartbeat",
+                  max_instances=1, coalesce=True, misfire_grace_time=30)
+
     def on_event(ev):
         kind = "error" if ev.code == EVENT_JOB_ERROR else "warning"
         detail = getattr(ev, "exception", None) or "missed run"
@@ -609,6 +613,7 @@ def main() -> None:
         if bot.start():
             cycle.approvals_bot = bot
             print("[run_loop] Discord approval buttons enabled")
+    heartbeat.write(started=time.time())  # the watchdog (src/watchdog.py) alerts if this goes quiet in market hours
     install_stop_handlers()  # before announcing "started", so a stop right after is still reported
     try:
         alerts.log_event("session", f"scheduler process started ({mode})", cycle.engine)

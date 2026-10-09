@@ -39,5 +39,5 @@ def notify(message: str, level: str = "info", engine=None, post=requests.post) -
         r = post(url, json={"content": text}, timeout=10)
         return 200 <= r.status_code < 300
     except Exception as exc:  # noqa: BLE001
-        print(f"[alerts] discord post failed: {exc}")
+        print(f"[alerts] discord post failed: {str(exc).replace(url, '<webhook>')[:300]}")
         return False

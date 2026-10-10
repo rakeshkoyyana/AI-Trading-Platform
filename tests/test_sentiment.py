@@ -127,3 +127,99 @@ def test_get_rolling_sentiment_reads_db(engine):
         s.add(SentimentScore(symbol="OTHER", timestamp=NOW - timedelta(minutes=20), score=0.9, label="positive"))
     r = get_rolling_sentiment("ACME", 4, engine=engine, now=NOW)
     assert r["n"] == 1 and r["score"] == pytest.approx(-0.7) and r["label"] == "negative"
+
+
+# ---- multi-source reliability -------------------------------------------------------------------------------
+import json  # noqa: E402
+
+
+def _with_alpaca(monkeypatch):
+    s = settings_mod.Settings(finnhub_api_key="fh-key", newsapi_key="na-key", alpaca_api_key="ak", alpaca_secret_key="as")
+    monkeypatch.setattr(nf, "get_settings", lambda: s)
+
+
+def _alpaca_payload():
+    return {"news": [
+        dict(id=1, headline="ACME lands defense contract", summary="", source="Benzinga", url="http://b/1",
+             created_at="2026-10-01T14:40:00Z", symbols=["ACME"]),
+        dict(id=2, headline="Stocks wrap: Fed day", summary="Indexes drift", source="Benzinga", url="http://b/2",
+             created_at="2026-10-01T14:41:00Z", symbols=["ACME", "SPY", "QQQ", "NVDA"]),
+        dict(id=3, headline="Space company wins launch slot", summary="", source="Benzinga", url=None,
+             created_at="2026-10-01T14:42:00Z", symbols=["ACME"]),
+    ]}
+
+
+def test_relevance_filter():
+    assert nf.is_relevant("ASTS", "ASTS stock slides after hours")
+    assert nf.is_relevant("ASTS", "AST SpaceMobile sinks 7%", tagged=["ASTS"])            # sole tag
+    assert not nf.is_relevant("ASTS", "Vodafone targets 1B synergies", tagged=["ASTS", "VOD", "T"])
+    assert not nf.is_relevant("ASTS", "Stock market today: S&P slips", tagged=["SPY", "ASTS"])
+    assert not nf.is_relevant("MU", "Muni bond rally continues")                          # not a substring match
+    assert nf.is_relevant("MU", "Micron (MU) beats estimates")
+
+
+def test_alpaca_and_finnhub_are_merged_and_noise_dropped(engine, monkeypatch, tmp_path):
+    _with_alpaca(monkeypatch)
+    monkeypatch.setattr(nf, "HEALTH_PATH", tmp_path / "h.json")
+
+    def http(url, params, timeout=15, headers=None):
+        return _alpaca_payload() if "alpaca" in url else _finnhub_payload(2)
+
+    rows = nf.get_news("ACME", NOW - timedelta(hours=6), engine=engine, http=http, now=NOW)
+    heads = {r.headline for r in rows}
+    assert "ACME lands defense contract" in heads and "ACME beats estimates #0" in heads
+    assert "Stocks wrap: Fed day" not in heads                      # multi-ticker market wrap dropped
+    assert "Space company wins launch slot" in heads                # sole-tag item with no URL kept (synthetic id)
+    assert len(rows) == 4
+
+
+def test_same_story_from_two_outlets_is_stored_once(engine):
+    base = dict(symbol="ACME", timestamp=NOW, source="x")
+    n1 = nf.store_articles(engine, [dict(base, headline="ACME Beats Estimates!", url="http://a/1")])
+    n2 = nf.store_articles(engine, [dict(base, headline="acme beats estimates", url="http://other/9")])
+    assert (n1, n2) == (1, 0)
+
+
+def test_one_source_failing_does_not_lose_the_other(engine, monkeypatch, tmp_path):
+    _with_alpaca(monkeypatch)
+    monkeypatch.setattr(nf, "HEALTH_PATH", tmp_path / "h.json")
+
+    def http(url, params, timeout=15, headers=None):
+        if "alpaca" in url:
+            raise RuntimeError("503 for ak")
+        return _finnhub_payload(2)
+
+    rows = nf.get_news("ACME", NOW - timedelta(hours=6), engine=engine, http=http, now=NOW)
+    assert len(rows) == 2
+    h = json.loads((tmp_path / "h.json").read_text())
+    assert h["alpaca"]["fails"] == 1 and h["finnhub"]["fails"] == 0 and "ak" not in h["alpaca"]["error"].replace("<key>", "")
+
+
+def test_newsapi_is_only_used_when_main_sources_error(engine, monkeypatch, tmp_path):
+    _with_alpaca(monkeypatch)
+    monkeypatch.setattr(nf, "HEALTH_PATH", tmp_path / "h.json")
+    calls = []
+
+    def quiet(url, params, timeout=15, headers=None):
+        calls.append(url)
+        return {"news": []} if "alpaca" in url else []
+
+    nf.get_news("ACME", NOW - timedelta(hours=6), engine=engine, http=quiet, now=NOW)
+    assert not any("newsapi" in u for u in calls)                   # empty != broken: keep the 100/day budget
+
+
+def test_three_failures_in_a_row_alert_once_and_recovery_is_reported(tmp_path):
+    sent, p = [], tmp_path / "h.json"
+    note = lambda m, lvl: sent.append((lvl, m))  # noqa: E731
+    for _ in range(4):
+        nf.record_health("alpaca", False, error="boom", path=p, notify=note)
+    assert len(sent) == 1 and sent[0][0] == "warning" and "3 times" in sent[0][1]
+    nf.record_health("alpaca", True, 5, path=p, notify=note)
+    assert len(sent) == 2 and "working again" in sent[1][1]
+
+
+def test_error_text_never_contains_keys(monkeypatch):
+    _with_alpaca(monkeypatch)
+    e = RuntimeError("GET https://finnhub.io/api/v1/company-news?symbol=X&token=fh-key failed; secret as ak")
+    out = nf._safe_err(e)
+    assert "fh-key" not in out and "token=<key>" in out

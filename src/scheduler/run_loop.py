@@ -582,7 +582,7 @@ def build_scheduler(cycle: TradingCycle):
     sched.add_job(cycle.end_session, CronTrigger(day_of_week=dow, hour=eh, minute=em + 2, timezone=tz),
                   id="session_end", misfire_grace_time=1800)
     sched.add_job(lambda: refresh_sentiment(cycle.universe(), engine=cycle.engine),
-                  CronTrigger(day_of_week=dow, hour=f"{sh}-{eh - 1}", minute=5, timezone=tz),
+                  CronTrigger(day_of_week=dow, hour=f"{sh}-{eh - 1}", minute="3,18,33,48", timezone=tz),  # news <= 15 min old at every cycle
                   id="sentiment", max_instances=1, coalesce=True, misfire_grace_time=300)
 
     sched.add_job(heartbeat.write, IntervalTrigger(seconds=15, timezone=tz), id="heartbeat",

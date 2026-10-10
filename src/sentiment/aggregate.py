@@ -87,7 +87,7 @@ def get_rolling_sentiment(
 
 
 def refresh_sentiment(symbols: list[str], engine=None, window_hours: float = 4.0) -> dict[str, dict]:
-    """Hourly job: fetch news -> score new headlines -> return rolling sentiment per symbol."""
+    """Every-15-min job: fetch news -> score new headlines -> return rolling sentiment per symbol."""
     from src.sentiment.news_fetch import get_news
 
     engine = engine or get_engine()
@@ -95,7 +95,7 @@ def refresh_sentiment(symbols: list[str], engine=None, window_hours: float = 4.0
     out = {}
     for sym in symbols:
         try:
-            get_news(sym, _utcnow() - timedelta(hours=max(24, window_hours)), engine=engine)
+            get_news(sym, _utcnow() - timedelta(hours=max(24, window_hours)), engine=engine, min_refresh_minutes=10.0)
             score_unscored(engine, sym)
         except Exception as exc:  # noqa: BLE001
             print(f"[sentiment] refresh failed for {sym}: {exc}")

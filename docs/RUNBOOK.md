@@ -190,3 +190,10 @@ every 15 s; during market hours, if it goes quiet for 2 min (or is alive but fin
 **SCHEDULER DOWN** to Discord (repeated every 15 min) and the dashboard shows a red banner. It says whether the process is gone
 (killed / crashed, e.g. out of memory) or frozen. Fix: open AlphaWave -> Restart. A "running again" message follows on recovery.
 Stopping from the app stops the watchdog first, so a deliberate stop does not alert. Positions at the broker are never touched.
+
+## News sources
+News is merged from **Alpaca News** (Benzinga; uses your existing Alpaca keys), **Finnhub** and, only if both break, **NewsAPI**.
+Each refresh asks every configured source, keeps only articles really about the ticker (the ticker appears in the text, or it is the
+only ticker the provider tagged), and drops syndicated duplicates. Refresh runs every 15 min in market hours (was hourly).
+The System tab shows each source's last success, failures in a row and the newest headline per ticker; 3 failures in a row post a
+Discord warning. To see what each source returns right now: `python -m src.sentiment.news_fetch --check ASTS`.

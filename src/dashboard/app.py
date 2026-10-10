@@ -806,6 +806,19 @@ with tab_sys:
         fresh.append({"Symbol": x, "Newest bar (CT)": None if t is None else m.to_local(pd.Series([t])).iat[0].strftime("%m-%d %H:%M"),
                       "Age (min)": None if t is None else round((utc_now() - t).total_seconds() / 60)})
     st.dataframe(pd.DataFrame(fresh), hide_index=True, width="stretch")
+    from src.sentiment.news_fetch import read_health as _news_health
+    _nh = _news_health()
+    if _nh:
+        st.caption("News sources (each refresh asks every configured source; 3 failures in a row raise a Discord warning)")
+        st.dataframe(pd.DataFrame([
+            {"Source": k, "Last OK (UTC)": v.get("last_ok", "never"), "Last article batch (UTC)": v.get("last_articles", "-"),
+             "Failures in a row": v.get("fails", 0), "Last error": v.get("error", "")} for k, v in _nh.items()]),
+            hide_index=True, width="stretch")
+    _nw = []
+    for x in tickers:
+        _n = D.latest_news_time(engine, x)
+        _nw.append({"Symbol": x, "Newest headline age (h)": None if _n is None else round((utc_now() - _n).total_seconds() / 3600, 1)})
+    st.dataframe(pd.DataFrame(_nw), hide_index=True, width="stretch")
     ev = _events(DB, 72)
     if not ev.empty:
         kinds = st.multiselect("Event types", sorted(ev["kind"].unique()), default=[x for x in sorted(ev["kind"].unique()) if x not in ("cycle", "decision")])

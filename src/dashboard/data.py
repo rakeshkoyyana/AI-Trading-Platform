@@ -455,3 +455,11 @@ def load_model_card(models_dir: Path | None = None) -> dict | None:
     log = d / "MODEL_LOG.md"
     card["log"] = log.read_text()[-6000:] if log.exists() else ""
     return card
+
+
+def latest_news_time(engine, symbol: str):
+    """Timestamp (naive UTC) of the newest stored headline for `symbol`, or None."""
+    from sqlalchemy import func
+
+    with session_scope(engine) as s:
+        return s.execute(select(func.max(News.timestamp)).where(News.symbol == symbol)).scalar()
